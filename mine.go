@@ -30,6 +30,8 @@ type noteOut struct {
 	NUnknown      int    `json:"n_unknown"`
 }
 
+var studyDeck = envOr("MDB_STUDY_DECK", "Study Deck")
+
 var reAudio = regexp.MustCompile(`\[(?:audio|sound):([^\]]+)\]`)
 var reImg = regexp.MustCompile(`<img[^>]+src="([^"]+)"`)
 
@@ -104,20 +106,27 @@ func cmdAlternates(db *sql.DB, tag string) ([]noteOut, error) {
 	return out, nil
 }
 
-// prepareMine makes sure the note exists in Anki and its Word field holds the
-// target word. Notes that were removed from Anki are re-created (same fields,
-// media copied into collection.media) in their original deck; the database
-// row is re-keyed to the new Anki note id. Returns the Anki note id.
+// prepareMine gets a database card ready for MvJ's All-In-One and returns the
+// Anki note id to run it on:
+//   - the pool note is still in Anki -> fill its Word field (what the old
+//     *_daily add-ons did); All-In-One then moves it into Study Deck
+//   - it only exists in the database -> create it straight in the Study Deck
+//     (fields, context, clip + screenshot copied into collection.media) and
+//     link it to its pool row
 func prepareMine(db *sql.DB, nid int64, word string) (int64, error) {
 	writeMu.Lock()
 	defer writeMu.Unlock()
 	var inAnki int
-	var deck, sentence, sAudio, image, notes, wordF string
-	err := db.QueryRow(`SELECT n.in_anki, COALESCE(d.name,'Database::mining-db'), COALESCE(n.sentence,''), COALESCE(n.sentence_audio,''),
-	   COALESCE(n.image,''), COALESCE(n.notes,''), COALESCE(n.word,'') FROM notes n LEFT JOIN decks d ON d.id=n.deck_id WHERE n.id=?`, nid).
-		Scan(&inAnki, &deck, &sentence, &sAudio, &image, &notes, &wordF)
+	var sentence, sAudio, image, notes, wordF, summary, lines string
+	err := db.QueryRow(`SELECT n.in_anki, COALESCE(n.sentence,''), COALESCE(n.sentence_audio,''),
+	   COALESCE(n.image,''), COALESCE(n.notes,''), COALESCE(n.word,''), COALESCE(s.text,''), COALESCE(n.ctx_lines,'')
+	   FROM notes n LEFT JOIN summaries s ON s.id=n.ctx_summary_id WHERE n.id=?`, nid).
+		Scan(&inAnki, &sentence, &sAudio, &image, &notes, &wordF, &summary, &lines)
 	if err != nil {
 		return 0, fmt.Errorf("note %d not in mining-db: %w", nid, err)
+	}
+	if word == "" {
+		word = wordF
 	}
 	if inAnki == 1 {
 		var infos []acNote
@@ -136,21 +145,18 @@ func prepareMine(db *sql.DB, nid int64, word string) (int64, error) {
 		db.Exec(`UPDATE notes SET in_anki=0 WHERE id=?`, nid)
 	}
 
-	// re-create: copy media first
-	for _, name := range []string{audioName(sAudio), imgName(image)} {
-		if name == "" {
-			continue
-		}
+	for _, name := range noteMedia(sAudio, image) {
 		src := mediaPath(name)
 		if src == "" {
-			return 0, fmt.Errorf("media %s not found in collection.media or database.media", name)
+			return 0, fmt.Errorf("media %s not found in mining-db/media, collection.media or database.media", name)
 		}
 		if err := ac("storeMediaFile", map[string]any{"filename": name, "path": src}, nil); err != nil {
 			return 0, err
 		}
 	}
-	if word == "" {
-		word = wordF
+	ctx := ""
+	if summary != "" || lines != "" {
+		ctx = "Episode summary: " + summary + " | Sentence context: " + lines
 	}
 	var tags []string
 	rows, _ := db.Query(`SELECT tag FROM note_tags WHERE note_id=?`, nid)
@@ -162,18 +168,16 @@ func prepareMine(db *sql.DB, nid int64, word string) (int64, error) {
 	rows.Close()
 	var newID int64
 	err = ac("addNote", map[string]any{"note": map[string]any{
-		"deckName": deck, "modelName": mvjNotetype,
-		"fields":  map[string]string{"Sentence": sentence, "Sentence Audio": sAudio, "Word": word, "Image": image, "Notes": notes},
-		"tags":    append(tags, "mining-db::restored"),
+		"deckName": studyDeck, "modelName": mvjNotetype,
+		"fields": map[string]string{"Sentence": sentence, "Sentence Audio": sAudio, "Word": word, "Image": image,
+			"Notes": notes, "Context": ctx},
+		"tags":    append(tags, "mining-db"),
 		"options": map[string]any{"allowDuplicate": true},
 	}}, &newID)
 	if err != nil {
 		return 0, err
 	}
-	if err := rekeyNote(db, nid, newID); err != nil {
-		return 0, err
-	}
-	db.Exec(`UPDATE notes SET in_anki=1, word=? WHERE id=?`, word, newID)
+	db.Exec(`INSERT OR REPLACE INTO study_links(study_id, source_id, at) VALUES(?,?,?)`, newID, nid, time.Now().Unix())
 	return newID, nil
 }
 
@@ -182,26 +186,6 @@ func imgName(field string) string {
 		return m[1]
 	}
 	return ""
-}
-
-func rekeyNote(db *sql.DB, old, new int64) error {
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	for _, s := range []string{
-		`UPDATE notes SET id=?2 WHERE id=?1`,
-		`UPDATE note_morphs SET note_id=?2 WHERE note_id=?1`,
-		`UPDATE note_tags SET note_id=?2 WHERE note_id=?1`,
-		`UPDATE tagset_assign SET note_id=?2 WHERE note_id=?1`,
-		`UPDATE cards SET note_id=?2 WHERE note_id=?1`,
-	} {
-		if _, err := tx.Exec(s, old, new); err != nil {
-			tx.Rollback()
-			return err
-		}
-	}
-	return tx.Commit()
 }
 
 func recordMined(db *sql.DB, nid int64, tag, word string) error {

@@ -16,6 +16,8 @@ package main
 //              note tagged _card-status::i+0-manually
 //   ankimorphs / file - its dictionary form (or UniDic lemma) is an AnkiMorphs-known lemma, or
 //              listed in the known-morphs folder (snapshot at import)
+//   learned  - it was known at some point (the learned table keeps every
+//              known word for good, so the database stands without Anki)
 
 import (
 	"database/sql"
@@ -49,7 +51,8 @@ func deriveKnown(db *sql.DB, ids []int64) (map[int64]knownState, error) {
 	rows, err := db.Query(`SELECT m.id, m.base, m.reading,
 	   (SELECT known FROM manual_known mk WHERE mk.base=m.base AND mk.reading=m.reading),
 	   EXISTS(SELECT 1 FROM note_morphs nm WHERE nm.morph_id=m.id AND nm.note_id IN (` + studiedNotesSQL + `)),
-	   COALESCE((SELECT src FROM am_known a WHERE a.lemma=m.base), (SELECT src FROM am_known a WHERE a.lemma=m.lemma))
+	   COALESCE((SELECT src FROM am_known a WHERE a.lemma=m.base), (SELECT src FROM am_known a WHERE a.lemma=m.lemma)),
+	   (SELECT src FROM learned l WHERE l.base=m.base AND l.reading=m.reading)
 	   FROM morphs m` + filter)
 	if err != nil {
 		return nil, err
@@ -60,8 +63,8 @@ func deriveKnown(db *sql.DB, ids []int64) (map[int64]knownState, error) {
 		var base, reading string
 		var manual sql.NullInt64
 		var review bool
-		var am sql.NullString
-		if err := rows.Scan(&id, &base, &reading, &manual, &review, &am); err != nil {
+		var am, learned sql.NullString
+		if err := rows.Scan(&id, &base, &reading, &manual, &review, &am, &learned); err != nil {
 			return nil, err
 		}
 		switch {
@@ -69,6 +72,8 @@ func deriveKnown(db *sql.DB, ids []int64) (map[int64]knownState, error) {
 			out[id] = knownState{manual.Int64 == 1, "manual"}
 		case review:
 			out[id] = knownState{true, "review"}
+		case learned.Valid:
+			out[id] = knownState{true, learned.String}
 		case am.Valid:
 			src := am.String
 			if strings.HasPrefix(src, "file:") {
@@ -111,8 +116,15 @@ func refreshKnown(db *sql.DB, ids []int64) ([]int64, error) {
 		return nil, err
 	}
 	upd, _ := tx.Prepare(`UPDATE morphs SET known=?, known_src=NULLIF(?, '') WHERE id=?`)
+	// every known word is saved for good: it stays known even if the card that
+	// made it known leaves Anki (or Anki is replaced)
+	learn, _ := tx.Prepare(`INSERT OR IGNORE INTO learned(base, reading, src, at) SELECT base, reading, ?, ? FROM morphs WHERE id=?`)
+	now := time.Now().Unix()
 	var flipped []int64
 	for id, s := range st {
+		if s.known && s.src != "manual" {
+			learn.Exec(s.src, now, id)
+		}
 		c := cur[id]
 		if c != s {
 			upd.Exec(s.known, s.src, id)

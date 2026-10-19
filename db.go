@@ -15,7 +15,11 @@ var (
 	dbPath      = envOr("MDB_DB", filepath.Join(projectDir, "data", "mining.db"))
 	ankiProfile = envOr("MDB_ANKI_PROFILE", filepath.Join(os.Getenv("HOME"), ".local/share/Anki2/User 1"))
 	addonsDir   = filepath.Join(filepath.Dir(ankiProfile), "addons21")
-	mediaDirs   = []string{
+	// mining-db's own media store (hard links into the Anki folders, so no
+	// extra disk) comes first; the Anki folders are fallbacks
+	mediaStore = envOr("MDB_MEDIA", filepath.Join(projectDir, "media"))
+	mediaDirs  = []string{
+		mediaStore,
 		filepath.Join(ankiProfile, "collection.media"),
 		filepath.Join(addonsDir, "MvJ Japanese/user_files/database.media"),
 	}
@@ -107,6 +111,9 @@ CREATE INDEX IF NOT EXISTS note_morphs_morph ON note_morphs(morph_id, note_id);
 
 -- Known-word sources that are not derived from reviews.
 CREATE TABLE IF NOT EXISTS am_known(lemma TEXT PRIMARY KEY, src TEXT NOT NULL) WITHOUT ROWID; -- AnkiMorphs snapshot + known-morphs files (lemma-keyed)
+-- Every word that has ever been known, with where it first came from.
+CREATE TABLE IF NOT EXISTS learned(base TEXT NOT NULL, reading TEXT NOT NULL, src TEXT NOT NULL, at INTEGER NOT NULL,
+  PRIMARY KEY(base, reading)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS manual_known(base TEXT NOT NULL, reading TEXT NOT NULL, known INTEGER NOT NULL, at INTEGER,
   PRIMARY KEY(base, reading)) WITHOUT ROWID;
 
@@ -133,6 +140,9 @@ CREATE INDEX IF NOT EXISTS tagset_assign_tag ON tagset_assign(tag);
 CREATE INDEX IF NOT EXISTS tagset_assign_note ON tagset_assign(note_id);
 
 CREATE TABLE IF NOT EXISTS mined(note_id INTEGER NOT NULL, tag TEXT, word TEXT, at INTEGER NOT NULL);
+
+-- pool note -> the study card made from it (when mining created a new note)
+CREATE TABLE IF NOT EXISTS study_links(study_id INTEGER PRIMARY KEY, source_id INTEGER NOT NULL, at INTEGER NOT NULL);
 `
 
 func openDB() (*sql.DB, error) {

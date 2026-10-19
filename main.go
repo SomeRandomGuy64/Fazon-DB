@@ -34,6 +34,13 @@ Day to day
   mdb known BASE [READING]   mark a word known       (unknown / forget likewise)
   mdb backup                 snapshot + upload to Hetzner
 
+Long-term (database first, Anki only for reviews)
+  mdb import-apkg FILE.apkg [-deck NAME]   add a subs2srs deck straight to the database
+  mdb media-adopt            hard-link every pool clip/screenshot into mining-db/media
+  mdb export DIR [QUERY]     portable dump (notes.jsonl + known_words.csv) for any SRS
+  mdb import-known FILE      mark words known from any app's export (word[,reading] per line)
+  mdb anki-prune [-deck G] [-apply]   remove pool notes from Anki that the database fully holds
+
 Mining (/mvj-mine)
   mdb alternates TAG         JSON: this card + later alternates of the word
   mdb prepare NID [WORD]     ensure note is in Anki with Word filled; prints the Anki nid
@@ -64,6 +71,8 @@ func run(db *sql.DB, cmd string, args []string) error {
 	full := fs.Bool("full", false, "full sync")
 	days := fs.Int("days", 1, "sync window in days")
 	limit := fs.Int("n", 20, "result limit")
+	deck := fs.String("deck", "", "deck name / glob")
+	apply := fs.Bool("apply", false, "actually do it")
 	fs.Parse(args)
 	rest := fs.Args()
 
@@ -131,6 +140,30 @@ func run(db *sql.DB, cmd string, args []string) error {
 		return nil
 	case "backup":
 		return cmdBackup(db)
+	case "import-apkg":
+		if len(rest) < 1 {
+			return fmt.Errorf("usage: mdb import-apkg FILE.apkg [-deck NAME]")
+		}
+		for _, f := range rest {
+			if err := cmdImportApkg(db, f, *deck); err != nil {
+				return err
+			}
+		}
+		return nil
+	case "media-adopt":
+		return cmdMediaAdopt(db)
+	case "export":
+		if len(rest) < 1 {
+			return fmt.Errorf("usage: mdb export DIR [QUERY]")
+		}
+		return cmdExport(db, rest[0], strings.Join(rest[1:], " "))
+	case "import-known":
+		if len(rest) != 1 {
+			return fmt.Errorf("usage: mdb import-known FILE")
+		}
+		return cmdImportKnown(db, rest[0])
+	case "anki-prune":
+		return cmdAnkiPrune(db, *deck, *apply)
 	case "alternates":
 		if len(rest) != 1 {
 			return fmt.Errorf("usage: mdb alternates TAG")
