@@ -15,7 +15,8 @@ package main
 //   review   - it occurs on a note that has a studied (non-new) card, or a
 //              note tagged _card-status::i+0-manually
 //   ankimorphs / file - its dictionary form (or UniDic lemma) is an AnkiMorphs-known lemma, or
-//              listed in the known-morphs folder (snapshot at import)
+//              listed in the known-morphs folder (snapshot at import); main
+//              reading of the spelling only, no single-kana fragments
 //   learned  - it was known at some point (the learned table keeps every
 //              known word for good, so the database stands without Anki)
 
@@ -32,6 +33,12 @@ const manualKnownTag = "_card-status::i+0-manually"
 // studiedNotesSQL = notes whose words count as known through review.
 const studiedNotesSQL = `SELECT note_id FROM cards WHERE type != 0
    UNION SELECT note_id FROM note_tags WHERE tag = '` + manualKnownTag + `'`
+
+// AnkiMorphs lemmas carry no reading, so a lemma only vouches for the main
+// (most frequent) reading of a spelling — knowing 犬 いぬ does not make 犬 けん
+// known — and never for single-kana parser fragments (ぎ, び).
+const amEligible = `NOT EXISTS (SELECT 1 FROM morphs m2 WHERE m2.base = m.base AND m2.freq > m.freq)
+	   AND NOT (length(m.base) = 1 AND m.base GLOB '[ぁ-ゖァ-ヺ]')`
 
 type knownState struct {
 	known bool
@@ -51,7 +58,7 @@ func deriveKnown(db *sql.DB, ids []int64) (map[int64]knownState, error) {
 	rows, err := db.Query(`SELECT m.id, m.base, m.reading,
 	   (SELECT known FROM manual_known mk WHERE mk.base=m.base AND mk.reading=m.reading),
 	   EXISTS(SELECT 1 FROM note_morphs nm WHERE nm.morph_id=m.id AND nm.note_id IN (` + studiedNotesSQL + `)),
-	   COALESCE((SELECT src FROM am_known a WHERE a.lemma=m.base), (SELECT src FROM am_known a WHERE a.lemma=m.lemma)),
+	   CASE WHEN `+amEligible+` THEN COALESCE((SELECT src FROM am_known a WHERE a.lemma=m.base), (SELECT src FROM am_known a WHERE a.lemma=m.lemma)) END,
 	   (SELECT src FROM learned l WHERE l.base=m.base AND l.reading=m.reading)
 	   FROM morphs m` + filter)
 	if err != nil {

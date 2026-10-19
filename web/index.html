@@ -173,14 +173,15 @@ const tabs = {
     const ip = s.i_plus || {};
     $('#main').innerHTML = `
       <div class="grid">
-        <div class="stat"><div class="v">${fmt(s.known_words)}</div><div class="k">known words (of ${fmt(s.words)})</div></div>
+        <div class="stat"><div class="v">${fmt(s.learned_target_words)}</div><div class="k">learned words (target words on studied cards)</div></div>
+        <div class="stat"><div class="v">${fmt(s.known_words)}</div><div class="k">words not blocking i+1 (of ${fmt(s.words)}; incl. grammar, every word on studied sentences)</div></div>
         <div class="stat"><div class="v">${(s.token_coverage_pct || 0).toFixed(1)}%</div><div class="k">of all words in your cards are known</div></div>
         <div class="stat"><div class="v">${fmt(ip['i+1'])}</div><div class="k">i+1 cards</div></div>
         <div class="stat"><div class="v">${fmt(ip['i+0'])}</div><div class="k">i+0 cards</div></div>
         <div class="stat"><div class="v">${fmt(ip['i+≥2'])}</div><div class="k">i+≥2 cards</div></div>
         <div class="stat"><div class="v">${fmt(s.pool_notes)}</div><div class="k">subs2srs pool cards (${fmt(s.notes)} total)</div></div>
       </div>
-      <h2>Known words by source</h2>
+      <h2>Words not blocking i+1, by source</h2>
       <div class="row">${Object.entries(s.known_by_source || {}).map(([k, v]) => `<span class="chip">${esc(k)}: ${fmt(v)}</span>`).join('')}</div>
       <h2>Parser</h2>
       <div class="row"><span class="chip">model ${esc(s.model)}</span>

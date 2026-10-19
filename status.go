@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 type searchRow struct {
@@ -107,7 +108,8 @@ type statusInfo struct {
 	Stale        int            `json:"parsed_older_model_or_unparsed"`
 	Model        string         `json:"model"`
 	Words        int            `json:"words"`
-	KnownWords   int            `json:"known_words"`
+	KnownWords   int            `json:"known_words"`        // words that don't block i+1 (AnkiMorphs-style)
+	LearnedWords int            `json:"learned_target_words"` // distinct target words on studied cards
 	KnownBySrc   map[string]int `json:"known_by_source"`
 	IPlus        map[string]int `json:"i_plus"`
 	Tagsets      []tagsetInfo   `json:"tagsets"`
@@ -133,6 +135,7 @@ func getStatus(db *sql.DB) statusInfo {
 		Scan(&s.Notes, &s.NotInAnki, &s.Parsed, &s.Stale)
 	db.QueryRow(`SELECT COUNT(*) FROM notes n JOIN decks d ON d.id=n.deck_id WHERE d.is_pool=1`).Scan(&s.PoolNotes)
 	db.QueryRow(`SELECT COUNT(*), SUM(known) FROM morphs WHERE freq > 0`).Scan(&s.Words, &s.KnownWords)
+	s.LearnedWords = learnedTargetWords(db)
 	rows, _ := db.Query(`SELECT COALESCE(known_src,'?'), COUNT(*) FROM morphs WHERE known=1 AND freq > 0 GROUP BY 1`)
 	for rows != nil && rows.Next() {
 		var k string
@@ -177,4 +180,25 @@ func printStatus(db *sql.DB) error {
 	b, _ := json.MarshalIndent(getStatus(db), "", "  ")
 	fmt.Println(string(b))
 	return nil
+}
+
+// learnedTargetWords counts the distinct target words (Word field) on notes
+// with a studied card — the real vocabulary number, like count_known_words.py.
+func learnedTargetWords(db *sql.DB) int {
+	rows, err := db.Query(`SELECT word FROM notes n WHERE word != '' AND EXISTS (SELECT 1 FROM cards c WHERE c.note_id = n.id AND c.type != 0)`)
+	if err != nil {
+		return 0
+	}
+	defer rows.Close()
+	seen := map[string]bool{}
+	for rows.Next() {
+		var w string
+		rows.Scan(&w)
+		for _, part := range strings.Split(w, "/") { // multi-unit entries are joined by "/"
+			if t := parseText("Word", "", part); t != "" {
+				seen[t] = true
+			}
+		}
+	}
+	return len(seen)
 }
