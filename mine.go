@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -74,8 +75,7 @@ func cmdAlternates(db *sql.DB, tag string) ([]noteOut, error) {
 		return nil, fmt.Errorf("not a positional mining tag (…::NNNN::PP): %s", tag)
 	}
 	prefix := m[1]
-	var start int
-	fmt.Sscan(m[2], &start)
+	start, _ := strconv.Atoi(m[2]) // not Sscan: it reads "08" as (invalid) octal
 	rows, err := db.Query(`SELECT tag, pos, note_id, word FROM tagset_assign WHERE tag LIKE ? ESCAPE '\' AND pos >= ? ORDER BY pos`,
 		likeGlob(prefix)+"::%", start)
 	if err != nil {
