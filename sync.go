@@ -208,9 +208,9 @@ func refreshNotesByID(db *sql.DB, ids []int64) (int, error) {
 		return 0, nil
 	}
 	res, err := db.Exec(`UPDATE notes SET
-	   n_unknown = (SELECT COUNT(*) FROM note_morphs nm JOIN morphs m ON m.id=nm.morph_id WHERE nm.note_id=notes.id AND m.known=0),
-	   unk_morph = CASE WHEN (SELECT COUNT(*) FROM note_morphs nm JOIN morphs m ON m.id=nm.morph_id WHERE nm.note_id=notes.id AND m.known=0) = 1
-	     THEN (SELECT m.id FROM note_morphs nm JOIN morphs m ON m.id=nm.morph_id WHERE nm.note_id=notes.id AND m.known=0) END
+	   n_unknown = (SELECT COUNT(*) FROM note_morphs nm JOIN morphs m ON m.id=nm.morph_id WHERE nm.note_id=notes.id AND m.known=0 AND m.ignored=0),
+	   unk_morph = CASE WHEN (SELECT COUNT(*) FROM note_morphs nm JOIN morphs m ON m.id=nm.morph_id WHERE nm.note_id=notes.id AND m.known=0 AND m.ignored=0) = 1
+	     THEN (SELECT m.id FROM note_morphs nm JOIN morphs m ON m.id=nm.morph_id WHERE nm.note_id=notes.id AND m.known=0 AND m.ignored=0) END
 	   WHERE id IN (` + joinIDs(ids) + `)`)
 	if err != nil {
 		return 0, err

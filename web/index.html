@@ -71,6 +71,7 @@ mark { background: var(--hl); color: var(--unknown); border-radius: 3px; padding
 .tok { display: inline-block; text-align: center; margin: 0 1px; padding: 0 2px; border-radius: 4px; cursor: pointer; vertical-align: top; line-height: 1.3; }
 .tok small { display: block; font-size: 10px; color: var(--muted); }
 .tok.u { background: var(--hl); color: var(--unknown); }
+.tok.g { color: var(--muted); }
 .tok.x { cursor: default; }
 .field { margin: 14px 0; } .field .k { color: var(--muted); font-size: 12px; margin-bottom: 2px; }
 .field .v { font-family: var(--jp); white-space: pre-wrap; word-break: break-word; }
@@ -174,7 +175,7 @@ const tabs = {
     $('#main').innerHTML = `
       <div class="grid">
         <div class="stat"><div class="v">${fmt(s.learned_target_words)}</div><div class="k">learned words (target words on studied cards)</div></div>
-        <div class="stat"><div class="v">${fmt(s.known_words)}</div><div class="k">words not blocking i+1 (of ${fmt(s.words)}; incl. grammar, every word on studied sentences)</div></div>
+        <div class="stat"><div class="v">${fmt(s.known_words)}</div><div class="k">words not blocking i+1 (of ${fmt(s.words)}; incl. grammar, every word on studied sentences) · ${fmt(s.ignored_words)} ignored</div></div>
         <div class="stat"><div class="v">${(s.token_coverage_pct || 0).toFixed(1)}%</div><div class="k">of all words in your cards are known</div></div>
         <div class="stat"><div class="v">${fmt(ip['i+1'])}</div><div class="k">i+1 cards</div></div>
         <div class="stat"><div class="v">${fmt(ip['i+0'])}</div><div class="k">i+0 cards</div></div>
@@ -225,7 +226,8 @@ const tabs = {
   async words() {
     $('#main').innerHTML = `
       <div class="row"><input type="search" id="wq" placeholder="Filter words (dictionary form or reading)" value="${esc(state.wq)}">
-        <select id="wk"><option value="">All</option><option value="0">Unknown</option><option value="1">Known</option></select></div>
+        <select id="wk"><option value="">All</option><option value="0">Unknown</option><option value="1">Known</option><option value="i">Ignored</option></select></div>
+      <p class="romaji" style="margin:-6px 0 12px">Ignored words count as neither known nor unknown, so they never make a card i+1. Single-kana parser fragments are ignored by default. Un-ignore any that are real words.</p>
       <table id="wt"></table><div class="pager" id="wpg"></div>`;
     $('#wk').value = state.wk;
     const run = async () => {
@@ -234,8 +236,11 @@ const tabs = {
       $('#wt').innerHTML = `<tr><th class="num">Rank</th><th>Word</th><th>POS</th><th class="num">Freq</th><th class="num">i+1 cards</th><th>Status</th><th></th></tr>` +
         ws.map(w => `<tr><td class="num">${fmt(w.rank)}</td><td>${wordLabel(w.base, w.reading)}</td><td class="romaji">${esc(w.pos)}</td>
           <td class="num">${fmt(w.freq)}</td><td class="num">${w.i1_cards ? `<a href="#" data-unk="${esc(w.base)}">${fmt(w.i1_cards)}</a>` : 0}</td>
-          <td class="${w.known ? 'known' : 'unknown'}">${w.known ? 'known' : 'unknown'}${w.src ? ` <span class="romaji">(${esc(w.src)})</span>` : ''}</td>
-          <td><button class="btn" data-mark="${w.known ? 'unknown' : 'known'}" data-b="${esc(w.base)}" data-r="${esc(w.reading)}">Mark ${w.known ? 'unknown' : 'known'}</button></td></tr>`).join('');
+          <td class="${w.ignored ? 'romaji' : w.known ? 'known' : 'unknown'}">${w.ignored ? 'ignored' : w.known ? 'known' : 'unknown'}${w.src && !w.ignored ? ` <span class="romaji">(${esc(w.src)})</span>` : ''}</td>
+          <td><div class="row" style="margin:0;flex-wrap:nowrap">${w.ignored
+            ? `<button class="btn" data-mark="unignore" data-b="${esc(w.base)}" data-r="${esc(w.reading)}">Un-ignore</button>`
+            : `<button class="btn" data-mark="${w.known ? 'unknown' : 'known'}" data-b="${esc(w.base)}" data-r="${esc(w.reading)}">Mark ${w.known ? 'unknown' : 'known'}</button>
+               <button class="btn" data-mark="ignore" data-b="${esc(w.base)}" data-r="${esc(w.reading)}">Ignore</button>`}</div></td></tr>`).join('');
       $('#wt').querySelectorAll('[data-mark]').forEach(b => b.onclick = async () => {
         b.disabled = true; await api('/api/word/mark', {method: 'POST', body: JSON.stringify({base: b.dataset.b, reading: b.dataset.r, how: b.dataset.mark})}); run(); });
       $('#wt').querySelectorAll('[data-unk]').forEach(a => a.onclick = e => { e.preventDefault(); state.q = 'i:1 unk:' + a.dataset.unk; state.off = 0; show('search'); });
@@ -274,7 +279,7 @@ async function openNote(nid) {
   const n = await api('/api/note/' + nid);
   const f = n.fields, audio = (f['Sentence Audio'].match(/\[(?:audio|sound):([^\]]+)\]/) || [])[1], img = (f.Image.match(/src="([^"]+)"/) || [])[1];
   const toks = (n.tokens || []).map((t, i) => t.id
-    ? `<span class="tok ${t.known ? '' : 'u'}" data-i="${i}">${esc(t.s)}<small>${/[一-龯々〆ヶ]/.test(t.s) ? esc(t.reading) : '&nbsp;'}</small></span>`
+    ? `<span class="tok ${t.ignored ? 'g' : t.known ? '' : 'u'}" data-i="${i}">${esc(t.s)}<small>${/[一-龯々〆ヶ]/.test(t.s) ? esc(t.reading) : '&nbsp;'}</small></span>`
     : `<span class="tok x">${esc(t.s)}<small>&nbsp;</small></span>`).join('');
   const fld = (k, v, raw) => v ? `<div class="field"><div class="k">${k}</div><div class="v">${raw ? v : esc(v)}</div></div>` : '';
   $('#drawer').innerHTML = `<button class="btn close" id="dclose">Close</button>
@@ -300,9 +305,11 @@ async function openNote(nid) {
     const t = n.tokens[+el.dataset.i];
     $('#wp').style.display = 'block';
     $('#wp').innerHTML = `${wordLabel(t.base, t.reading)} · rank ${fmt(t.rank)} ·
-      <span class="${t.known ? 'known' : 'unknown'}">${t.known ? 'known' : 'unknown'}</span>${t.src ? ` <span class="romaji">(${esc(t.src)})</span>` : ''}
+      <span class="${t.ignored ? 'romaji' : t.known ? 'known' : 'unknown'}">${t.ignored ? 'ignored' : t.known ? 'known' : 'unknown'}</span>${t.src && !t.ignored ? ` <span class="romaji">(${esc(t.src)})</span>` : ''}
       <div class="row" style="margin:8px 0 0"><button class="btn" id="wmark">Mark ${t.known ? 'unknown' : 'known'}</button>
+      <button class="btn" id="wign">${t.ignored ? 'Un-ignore' : 'Ignore'}</button>
       <button class="btn" id="wfind">i+1 cards for this word</button></div>`;
+    $('#wign').onclick = async () => { await api('/api/word/mark', {method: 'POST', body: JSON.stringify({base: t.base, reading: t.reading, how: t.ignored ? 'unignore' : 'ignore'})}); openNote(nid); };
     $('#wmark').onclick = async () => { await api('/api/word/mark', {method: 'POST', body: JSON.stringify({base: t.base, reading: t.reading, how: t.known ? 'unknown' : 'known'})}); openNote(nid); };
     $('#wfind').onclick = () => { $('#drawer').classList.remove('open'); state.q = 'i:1 unk:' + t.base; state.off = 0; show('search'); };
   });

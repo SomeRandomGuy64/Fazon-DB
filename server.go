@@ -63,8 +63,10 @@ func serve(db *sql.DB, addr string) error {
 		}
 		var req struct{ Base, Reading, How string }
 		json.NewDecoder(r.Body).Decode(&req)
-		if req.How != "known" && req.How != "unknown" && req.How != "forget" {
-			http.Error(w, "how must be known|unknown|forget", 400)
+		switch req.How {
+		case "known", "unknown", "forget", "ignore", "unignore", "auto":
+		default:
+			http.Error(w, "how must be known|unknown|forget|ignore|unignore|auto", 400)
 			return
 		}
 		n, err := markWord(db, req.Base, req.Reading, req.How)
@@ -154,6 +156,7 @@ type tokenOut struct {
 	Base    string `json:"base,omitempty"`
 	Reading string `json:"reading,omitempty"`
 	Known   bool   `json:"known"`
+	Ignored bool   `json:"ignored,omitempty"`
 	Src     string `json:"src,omitempty"`
 	Rank    int    `json:"rank,omitempty"`
 }
@@ -201,10 +204,10 @@ func noteDetail(db *sql.DB, id int64) (noteFull, error) {
 	}
 	info := map[int64]tokenOut{}
 	if len(ids) > 0 {
-		rows, _ := db.Query(`SELECT id, base, reading, known, COALESCE(known_src,''), COALESCE(rank,0) FROM morphs WHERE id IN (` + joinIDs(ids) + `)`)
+		rows, _ := db.Query(`SELECT id, base, reading, known, ignored, COALESCE(known_src,''), COALESCE(rank,0) FROM morphs WHERE id IN (` + joinIDs(ids) + `)`)
 		for rows != nil && rows.Next() {
 			var t tokenOut
-			rows.Scan(&t.MorphID, &t.Base, &t.Reading, &t.Known, &t.Src, &t.Rank)
+			rows.Scan(&t.MorphID, &t.Base, &t.Reading, &t.Known, &t.Ignored, &t.Src, &t.Rank)
 			info[t.MorphID] = t
 		}
 		if rows != nil {
@@ -244,6 +247,7 @@ type wordRow struct {
 	Freq    int    `json:"freq"`
 	Rank    int    `json:"rank"`
 	Known   bool   `json:"known"`
+	Ignored bool   `json:"ignored"`
 	Src     string `json:"src"`
 	IPlus1  int    `json:"i1_cards"`
 }
@@ -259,10 +263,12 @@ func listWords(db *sql.DB, q, known string, limit, offset int) ([]wordRow, error
 	case "1":
 		where += " AND known = 1"
 	case "0":
-		where += " AND known = 0"
+		where += " AND known = 0 AND ignored = 0"
+	case "i":
+		where += " AND ignored = 1"
 	}
 	args = append(args, limit, offset)
-	rows, err := db.Query(`SELECT id, base, reading, COALESCE(pos,''), freq, COALESCE(rank,0), known, COALESCE(known_src,''),
+	rows, err := db.Query(`SELECT id, base, reading, COALESCE(pos,''), freq, COALESCE(rank,0), known, ignored, COALESCE(known_src,''),
 	   (SELECT COUNT(*) FROM notes n WHERE n.n_unknown = 1 AND n.unk_morph = morphs.id)
 	   FROM morphs WHERE `+where+` ORDER BY rank LIMIT ? OFFSET ?`, args...)
 	if err != nil {
@@ -272,7 +278,7 @@ func listWords(db *sql.DB, q, known string, limit, offset int) ([]wordRow, error
 	out := []wordRow{}
 	for rows.Next() {
 		var w wordRow
-		rows.Scan(&w.ID, &w.Base, &w.Reading, &w.Pos, &w.Freq, &w.Rank, &w.Known, &w.Src, &w.IPlus1)
+		rows.Scan(&w.ID, &w.Base, &w.Reading, &w.Pos, &w.Freq, &w.Rank, &w.Known, &w.Ignored, &w.Src, &w.IPlus1)
 		out = append(out, w)
 	}
 	return out, nil

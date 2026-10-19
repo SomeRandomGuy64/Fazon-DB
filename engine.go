@@ -40,9 +40,16 @@ const studiedNotesSQL = `SELECT note_id FROM cards WHERE type != 0
 const amEligible = `NOT EXISTS (SELECT 1 FROM morphs m2 WHERE m2.base = m.base AND m2.freq > m.freq)
 	   AND NOT (length(m.base) = 1 AND m.base GLOB '[ぁ-ゖァ-ヺ]')`
 
+// Single-kana parser fragments (ぎ, び, そ) are IGNORED by default: they count
+// as neither known nor unknown, so they never gate i+1 and never inflate the
+// known count. A fragment that is genuinely known (particles like は) stays
+// known; `mdb unignore` / the Words tab overrides the default per word.
+const fragmentSQL = `(length(m.base) = 1 AND m.base GLOB '[ぁ-ゖァ-ヺ]')`
+
 type knownState struct {
-	known bool
-	src   string
+	known   bool
+	src     string
+	ignored bool
 }
 
 // deriveKnown computes the known status for the given morphs (nil = all).
@@ -59,7 +66,9 @@ func deriveKnown(db *sql.DB, ids []int64) (map[int64]knownState, error) {
 	   (SELECT known FROM manual_known mk WHERE mk.base=m.base AND mk.reading=m.reading),
 	   EXISTS(SELECT 1 FROM note_morphs nm WHERE nm.morph_id=m.id AND nm.note_id IN (` + studiedNotesSQL + `)),
 	   CASE WHEN `+amEligible+` THEN COALESCE((SELECT src FROM am_known a WHERE a.lemma=m.base), (SELECT src FROM am_known a WHERE a.lemma=m.lemma)) END,
-	   (SELECT src FROM learned l WHERE l.base=m.base AND l.reading=m.reading)
+	   (SELECT src FROM learned l WHERE l.base=m.base AND l.reading=m.reading),
+	   (SELECT ignored FROM ignore_marks im WHERE im.base=m.base AND im.reading=m.reading),
+	   ` + fragmentSQL + `
 	   FROM morphs m` + filter)
 	if err != nil {
 		return nil, err
@@ -71,25 +80,36 @@ func deriveKnown(db *sql.DB, ids []int64) (map[int64]knownState, error) {
 		var manual sql.NullInt64
 		var review bool
 		var am, learned sql.NullString
-		if err := rows.Scan(&id, &base, &reading, &manual, &review, &am, &learned); err != nil {
+		var ignoreMark sql.NullInt64
+		var fragment bool
+		if err := rows.Scan(&id, &base, &reading, &manual, &review, &am, &learned, &ignoreMark, &fragment); err != nil {
 			return nil, err
 		}
+		var st knownState
 		switch {
 		case manual.Valid:
-			out[id] = knownState{manual.Int64 == 1, "manual"}
+			st = knownState{known: manual.Int64 == 1, src: "manual"}
 		case review:
-			out[id] = knownState{true, "review"}
+			st = knownState{known: true, src: "review"}
 		case learned.Valid:
-			out[id] = knownState{true, learned.String}
+			st = knownState{known: true, src: learned.String}
 		case am.Valid:
 			src := am.String
 			if strings.HasPrefix(src, "file:") {
 				src = "file"
 			}
-			out[id] = knownState{true, src}
-		default:
-			out[id] = knownState{false, ""}
+			st = knownState{known: true, src: src}
 		}
+		switch {
+		case ignoreMark.Valid:
+			st.ignored = ignoreMark.Int64 == 1
+		case fragment && !st.known:
+			st.ignored = true
+		}
+		if st.ignored { // ignored words are neither known nor unknown
+			st.known = false
+		}
+		out[id] = st
 	}
 	return out, rows.Err()
 }
@@ -102,7 +122,7 @@ func refreshKnown(db *sql.DB, ids []int64) ([]int64, error) {
 		return nil, err
 	}
 	cur := map[int64]knownState{}
-	q := `SELECT id, known, COALESCE(known_src,'') FROM morphs`
+	q := `SELECT id, known, COALESCE(known_src,''), ignored FROM morphs`
 	if ids != nil {
 		q += ` WHERE id IN (` + joinIDs(ids) + `)`
 	}
@@ -112,17 +132,17 @@ func refreshKnown(db *sql.DB, ids []int64) ([]int64, error) {
 	}
 	for rows.Next() {
 		var id int64
-		var k bool
+		var k, ig bool
 		var s string
-		rows.Scan(&id, &k, &s)
-		cur[id] = knownState{k, s}
+		rows.Scan(&id, &k, &s, &ig)
+		cur[id] = knownState{k, s, ig}
 	}
 	rows.Close()
 	tx, err := db.Begin()
 	if err != nil {
 		return nil, err
 	}
-	upd, _ := tx.Prepare(`UPDATE morphs SET known=?, known_src=NULLIF(?, '') WHERE id=?`)
+	upd, _ := tx.Prepare(`UPDATE morphs SET known=?, known_src=NULLIF(?, ''), ignored=? WHERE id=?`)
 	// every known word is saved for good: it stays known even if the card that
 	// made it known leaves Anki (or Anki is replaced)
 	learn, _ := tx.Prepare(`INSERT OR IGNORE INTO learned(base, reading, src, at) SELECT base, reading, ?, ? FROM morphs WHERE id=?`)
@@ -134,8 +154,8 @@ func refreshKnown(db *sql.DB, ids []int64) ([]int64, error) {
 		}
 		c := cur[id]
 		if c != s {
-			upd.Exec(s.known, s.src, id)
-			if c.known != s.known {
+			upd.Exec(s.known, s.src, s.ignored, id)
+			if c.known != s.known || c.ignored != s.ignored {
 				flipped = append(flipped, id)
 			}
 		}
@@ -161,8 +181,8 @@ func refreshNotes(db *sql.DB, morphIDs []int64) (int, error) {
 	defer tx.Rollback()
 	stmts := []string{
 		`DROP TABLE IF EXISTS temp.agg`,
-		`CREATE TEMP TABLE agg AS SELECT nm.note_id AS note_id, SUM(m.known = 0) AS nu,
-		   MAX(CASE WHEN m.known = 0 THEN m.id END) AS um
+		`CREATE TEMP TABLE agg AS SELECT nm.note_id AS note_id, SUM(m.known = 0 AND m.ignored = 0) AS nu,
+		   MAX(CASE WHEN m.known = 0 AND m.ignored = 0 THEN m.id END) AS um
 		   FROM note_morphs nm JOIN morphs m ON m.id = nm.morph_id` + where + ` GROUP BY nm.note_id`,
 		`UPDATE notes SET n_unknown = agg.nu, unk_morph = CASE WHEN agg.nu = 1 THEN agg.um END
 		   FROM agg WHERE agg.note_id = notes.id AND (notes.n_unknown != agg.nu OR notes.unk_morph IS NOT (CASE WHEN agg.nu = 1 THEN agg.um END))`,

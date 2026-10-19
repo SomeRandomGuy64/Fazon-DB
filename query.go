@@ -93,7 +93,7 @@ func buildWhere(db *sql.DB, q string) (string, []any, error) {
 			c = "n.id IN (SELECT nm.note_id FROM note_morphs nm JOIN morphs m ON m.id=nm.morph_id WHERE m.base = ?)"
 			args = append(args, val)
 		case "unk":
-			c = "n.id IN (SELECT nm.note_id FROM note_morphs nm JOIN morphs m ON m.id=nm.morph_id WHERE m.base = ? AND m.known = 0)"
+			c = "n.id IN (SELECT nm.note_id FROM note_morphs nm JOIN morphs m ON m.id=nm.morph_id WHERE m.base = ? AND m.known = 0 AND m.ignored = 0)"
 			args = append(args, val)
 		case "nid":
 			var ids []int64

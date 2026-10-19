@@ -61,7 +61,7 @@ func search(db *sql.DB, q string, limit, offset int) ([]searchRow, error) {
 
 func unknownWords(db *sql.DB, nid int64) []string {
 	rows, err := db.Query(`SELECT m.base || CASE WHEN m.reading != m.base THEN '【' || m.reading || '】' ELSE '' END
-	   FROM note_morphs nm JOIN morphs m ON m.id = nm.morph_id WHERE nm.note_id = ? AND m.known = 0`, nid)
+	   FROM note_morphs nm JOIN morphs m ON m.id = nm.morph_id WHERE nm.note_id = ? AND m.known = 0 AND m.ignored = 0`, nid)
 	if err != nil {
 		return nil
 	}
@@ -110,6 +110,7 @@ type statusInfo struct {
 	Words        int            `json:"words"`
 	KnownWords   int            `json:"known_words"`        // words that don't block i+1 (AnkiMorphs-style)
 	LearnedWords int            `json:"learned_target_words"` // distinct target words on studied cards
+	Ignored      int            `json:"ignored_words"`
 	KnownBySrc   map[string]int `json:"known_by_source"`
 	IPlus        map[string]int `json:"i_plus"`
 	Tagsets      []tagsetInfo   `json:"tagsets"`
@@ -134,7 +135,7 @@ func getStatus(db *sql.DB) statusInfo {
 	db.QueryRow(`SELECT COUNT(*), SUM(in_anki=0), SUM(parsed_model=?), SUM(parsed_model IS NULL OR parsed_model!=?) FROM notes`, fp, fp).
 		Scan(&s.Notes, &s.NotInAnki, &s.Parsed, &s.Stale)
 	db.QueryRow(`SELECT COUNT(*) FROM notes n JOIN decks d ON d.id=n.deck_id WHERE d.is_pool=1`).Scan(&s.PoolNotes)
-	db.QueryRow(`SELECT COUNT(*), SUM(known) FROM morphs WHERE freq > 0`).Scan(&s.Words, &s.KnownWords)
+	db.QueryRow(`SELECT SUM(ignored = 0), SUM(known), SUM(ignored) FROM morphs WHERE freq > 0`).Scan(&s.Words, &s.KnownWords, &s.Ignored)
 	s.LearnedWords = learnedTargetWords(db)
 	rows, _ := db.Query(`SELECT COALESCE(known_src,'?'), COUNT(*) FROM morphs WHERE known=1 AND freq > 0 GROUP BY 1`)
 	for rows != nil && rows.Next() {
@@ -157,7 +158,7 @@ func getStatus(db *sql.DB) statusInfo {
 		rows.Close()
 	}
 	var tot, kn sql.NullFloat64
-	db.QueryRow(`SELECT SUM(freq), SUM(CASE WHEN known=1 THEN freq END) FROM morphs`).Scan(&tot, &kn)
+	db.QueryRow(`SELECT SUM(freq), SUM(CASE WHEN known=1 THEN freq END) FROM morphs WHERE ignored = 0`).Scan(&tot, &kn)
 	if tot.Float64 > 0 {
 		s.Coverage = 100 * kn.Float64 / tot.Float64
 	}

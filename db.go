@@ -114,6 +114,9 @@ CREATE TABLE IF NOT EXISTS am_known(lemma TEXT PRIMARY KEY, src TEXT NOT NULL) W
 -- Every word that has ever been known, with where it first came from.
 CREATE TABLE IF NOT EXISTS learned(base TEXT NOT NULL, reading TEXT NOT NULL, src TEXT NOT NULL, at INTEGER NOT NULL,
   PRIMARY KEY(base, reading)) WITHOUT ROWID;
+-- per-word override of the ignore rule (1 = ignore, 0 = never ignore)
+CREATE TABLE IF NOT EXISTS ignore_marks(base TEXT NOT NULL, reading TEXT NOT NULL, ignored INTEGER NOT NULL, at INTEGER,
+  PRIMARY KEY(base, reading)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS manual_known(base TEXT NOT NULL, reading TEXT NOT NULL, known INTEGER NOT NULL, at INTEGER,
   PRIMARY KEY(base, reading)) WITHOUT ROWID;
 
@@ -164,6 +167,11 @@ func openDB() (*sql.DB, error) {
 		db.Exec(`ALTER TABLE morphs ADD COLUMN lemma TEXT`)
 	}
 	db.Exec(`CREATE INDEX IF NOT EXISTS morphs_lemma ON morphs(lemma)`)
+	var hasIgnored int
+	db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('morphs') WHERE name='ignored'`).Scan(&hasIgnored)
+	if hasIgnored == 0 {
+		db.Exec(`ALTER TABLE morphs ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0`)
+	}
 	return db, nil
 }
 

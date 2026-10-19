@@ -32,6 +32,8 @@ Day to day
   mdb status                 counts, model freshness, last sync/backup
   mdb search QUERY [-n 20]   search notes (see query.go for syntax)
   mdb known BASE [READING]   mark a word known       (unknown / forget likewise)
+  mdb ignore BASE [READING]  ignore a word: neither known nor unknown (unignore = never
+                             ignore; auto = back to the default: single-kana fragments ignored)
   mdb backup                 snapshot + upload to Hetzner
 
 Long-term (database first, Anki only for reviews)
@@ -124,7 +126,7 @@ func run(db *sql.DB, cmd string, args []string) error {
 		}
 		printJSON(rs)
 		return nil
-	case "known", "unknown", "forget":
+	case "known", "unknown", "forget", "ignore", "unignore", "auto":
 		if len(rest) < 1 {
 			return fmt.Errorf("usage: mdb %s BASE [READING]", cmd)
 		}
@@ -236,6 +238,11 @@ func markWord(db *sql.DB, base, reading, how string) (int, error) {
 	}
 	for _, k := range keys {
 		switch how {
+		case "ignore", "unignore":
+			db.Exec(`INSERT INTO ignore_marks(base,reading,ignored,at) VALUES(?,?,?,?) ON CONFLICT(base,reading) DO UPDATE SET ignored=excluded.ignored, at=excluded.at`,
+				k.b, k.r, b2i(how == "ignore"), time.Now().Unix())
+		case "auto":
+			db.Exec(`DELETE FROM ignore_marks WHERE base=? AND reading=?`, k.b, k.r)
 		case "forget":
 			db.Exec(`DELETE FROM manual_known WHERE base=? AND reading=?`, k.b, k.r)
 		default:
