@@ -8,7 +8,7 @@ stdin, one JSON object per line:
   The lines in one request are consecutive cues (one deck, in order); each
   line uses its neighbours as context, as reading_disambig.annotate_lines does.
 stdout, one JSON object per request:
-    {"results": [{"id": 123, "toks": [[surface, base, reading, pos1, pos2, pos3, keep], ...]}]}
+    {"results": [{"id": 123, "toks": [[surface, base, reading, pos1, pos2, pos3, keep, lemma], ...]}]}
   keep = 1 if the token counts as a word (morph), 0 if it is ignored the same
   way AnkiMorphs ignores it: symbols/punctuation/whitespace, numerals, proper
   nouns, and out-of-dictionary tokens.
@@ -63,7 +63,8 @@ class Worker(RD.Disambiguator):
             base, uni = C.base_form(w), C.unidic_reading(w)
             t = dict(surface=w.surface, offset=start, base=base, pos=w.feature.pos1, unidic_reading=uni,
                      reading=uni, changed=False, confidence=None, candidates=None,
-                     p2=w.feature.pos2 or "", p3=w.feature.pos3 or "")
+                     p2=w.feature.pos2 or "", p3=w.feature.pos3 or "",
+                     lemma=(w.feature.lemma or "").split("-")[0] if w.feature.lemma not in (None, "*") else base)
             t["keep"] = keep(w, t)
             if t["keep"] and C.KANJI.search(w.surface) and C.is_homograph(base):
                 cands = RD.R.cand_list(base, uni, self.extras)
@@ -90,7 +91,7 @@ def main():
         for x, toks in zip(items, w.annotate_lines(texts)):
             res.append({"id": x["id"], "toks": [
                 [t["surface"], t["base"], C.hira(t["reading"]) if t["reading"] else "", t["pos"] or "",
-                 t["p2"], t["p3"], t["keep"]] for t in toks]})
+                 t["p2"], t["p3"], t["keep"], t["lemma"]] for t in toks]})
         out.write(json.dumps({"results": res}, ensure_ascii=False) + "\n")
         out.flush()
 

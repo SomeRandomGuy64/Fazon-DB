@@ -87,6 +87,7 @@ CREATE INDEX IF NOT EXISTS note_tags_tag ON note_tags(tag);
 CREATE TABLE IF NOT EXISTS morphs(
   id INTEGER PRIMARY KEY,
   base TEXT NOT NULL,                -- dictionary form (UniDic orthBase)
+  lemma TEXT,                        -- UniDic lemma (為る for する, 無い for ない), for matching word lists
   reading TEXT NOT NULL,             -- dictionary-form reading from the reading model
   pos TEXT,
   freq INTEGER NOT NULL DEFAULT 0,   -- occurrences over the sentence text of all cards
@@ -145,6 +146,13 @@ func openDB() (*sql.DB, error) {
 	if _, err := db.Exec(schema); err != nil {
 		return nil, fmt.Errorf("schema: %w", err)
 	}
+	// migrations for databases created by earlier versions
+	var hasLemma int
+	db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('morphs') WHERE name='lemma'`).Scan(&hasLemma)
+	if hasLemma == 0 {
+		db.Exec(`ALTER TABLE morphs ADD COLUMN lemma TEXT`)
+	}
+	db.Exec(`CREATE INDEX IF NOT EXISTS morphs_lemma ON morphs(lemma)`)
 	return db, nil
 }
 

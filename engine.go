@@ -14,7 +14,7 @@ package main
 //   manual   - marked known in mining-db (an explicit "unknown" mark wins too)
 //   review   - it occurs on a note that has a studied (non-new) card, or a
 //              note tagged _card-status::i+0-manually
-//   ankimorphs / file - its dictionary form is an AnkiMorphs-known lemma, or
+//   ankimorphs / file - its dictionary form (or UniDic lemma) is an AnkiMorphs-known lemma, or
 //              listed in the known-morphs folder (snapshot at import)
 
 import (
@@ -49,7 +49,7 @@ func deriveKnown(db *sql.DB, ids []int64) (map[int64]knownState, error) {
 	rows, err := db.Query(`SELECT m.id, m.base, m.reading,
 	   (SELECT known FROM manual_known mk WHERE mk.base=m.base AND mk.reading=m.reading),
 	   EXISTS(SELECT 1 FROM note_morphs nm WHERE nm.morph_id=m.id AND nm.note_id IN (` + studiedNotesSQL + `)),
-	   (SELECT src FROM am_known a WHERE a.lemma=m.base)
+	   COALESCE((SELECT src FROM am_known a WHERE a.lemma=m.base), (SELECT src FROM am_known a WHERE a.lemma=m.lemma))
 	   FROM morphs m` + filter)
 	if err != nil {
 		return nil, err

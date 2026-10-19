@@ -146,34 +146,42 @@ func contentLen(s string) int {
 // morph id cache
 
 type morphCache struct {
-	ids map[string]int64
-	db  *sql.DB
+	ids      map[string]int64
+	lemmaSet map[int64]bool
+	db       *sql.DB
 }
 
 func loadMorphCache(db *sql.DB) *morphCache {
-	c := &morphCache{ids: map[string]int64{}, db: db}
-	rows, _ := db.Query(`SELECT id, base, reading FROM morphs`)
+	c := &morphCache{ids: map[string]int64{}, lemmaSet: map[int64]bool{}, db: db}
+	rows, _ := db.Query(`SELECT id, base, reading, lemma IS NOT NULL FROM morphs`)
 	for rows.Next() {
 		var id int64
 		var b, r string
-		rows.Scan(&id, &b, &r)
+		var hl bool
+		rows.Scan(&id, &b, &r, &hl)
 		c.ids[b+"\x00"+r] = id
+		c.lemmaSet[id] = hl
 	}
 	rows.Close()
 	return c
 }
 
-func (c *morphCache) id(tx *sql.Tx, base, reading, pos string) (int64, error) {
+func (c *morphCache) id(tx *sql.Tx, base, reading, pos, lemma string) (int64, error) {
 	k := base + "\x00" + reading
 	if id, ok := c.ids[k]; ok {
+		if !c.lemmaSet[id] && lemma != "" {
+			tx.Exec(`UPDATE morphs SET lemma=? WHERE id=? AND lemma IS NULL`, lemma, id)
+			c.lemmaSet[id] = true
+		}
 		return id, nil
 	}
-	res, err := tx.Exec(`INSERT INTO morphs(base, reading, pos) VALUES(?,?,?)`, base, reading, pos)
+	res, err := tx.Exec(`INSERT INTO morphs(base, reading, pos, lemma) VALUES(?,?,?,NULLIF(?, ''))`, base, reading, pos, lemma)
 	if err != nil {
 		return 0, err
 	}
 	id, _ := res.LastInsertId()
 	c.ids[k] = id
+	c.lemmaSet[id] = lemma != ""
 	return id, nil
 }
 
@@ -214,7 +222,11 @@ func storeResults(tx *sql.Tx, mc *morphCache, fp string, texts map[int64]string,
 				if reading == "" || reading == "?" {
 					reading = base
 				}
-				mid, err = mc.id(tx, base, reading, pos)
+				lemma := ""
+				if len(t) > 7 {
+					lemma = str(t[7])
+				}
+				mid, err = mc.id(tx, base, reading, pos, lemma)
 				if err != nil {
 					return nil, err
 				}

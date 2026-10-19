@@ -149,6 +149,7 @@ func readTargets(path string) ([]target, error) {
 // Re-running refreshes target lists from the add-on folders.
 func importTagsets(db *sql.DB) error {
 	cfgs, _ := filepath.Glob(filepath.Join(addonsDir, "*", "config.json"))
+	dropped := droppedTagsets(db)
 	n := 0
 	for _, cp := range cfgs {
 		b, err := os.ReadFile(cp)
@@ -169,6 +170,9 @@ func importTagsets(db *sql.DB) error {
 			RunDaily     *bool      `json:"run_automatically_daily"`
 		}
 		if json.Unmarshal(b, &c) != nil || c.TagPrefix == "" || c.TargetsCSV == "" || len(c.Pool) == 0 {
+			continue
+		}
+		if dropped[c.TagPrefix] {
 			continue
 		}
 		dir := filepath.Dir(cp)
@@ -220,6 +224,41 @@ func importTagsets(db *sql.DB) error {
 	return nil
 }
 
+// Dropped sets stay dropped: re-imports skip them, and their old tags are
+// still treated as derived (not imported as static tags).
+func droppedTagsets(db *sql.DB) map[string]bool {
+	out := map[string]bool{}
+	for _, p := range strings.Split(getMeta(db, "dropped_tagsets"), "\n") {
+		if p != "" {
+			out[p] = true
+		}
+	}
+	return out
+}
+
+func dropTagset(db *sql.DB, prefix string) error {
+	writeMu.Lock()
+	defer writeMu.Unlock()
+	var id int64
+	if err := db.QueryRow(`SELECT id FROM tagsets WHERE prefix=?`, prefix).Scan(&id); err != nil {
+		return fmt.Errorf("no tag set %q", prefix)
+	}
+	for _, q := range []string{`DELETE FROM tagset_assign WHERE tagset_id=?`, `DELETE FROM tagset_targets WHERE tagset_id=?`, `DELETE FROM tagsets WHERE id=?`} {
+		if _, err := db.Exec(q, id); err != nil {
+			return err
+		}
+	}
+	d := droppedTagsets(db)
+	d[prefix] = true
+	var l []string
+	for p := range d {
+		l = append(l, p)
+	}
+	sort.Strings(l)
+	setMeta(db, "dropped_tagsets", strings.Join(l, "\n"))
+	return nil
+}
+
 func tagsetPrefixes(db *sql.DB) []string {
 	rows, err := db.Query(`SELECT prefix FROM tagsets`)
 	if err != nil {
@@ -230,6 +269,9 @@ func tagsetPrefixes(db *sql.DB) []string {
 	for rows.Next() {
 		var p string
 		rows.Scan(&p)
+		out = append(out, p)
+	}
+	for p := range droppedTagsets(db) {
 		out = append(out, p)
 	}
 	return out
@@ -333,7 +375,10 @@ func computeTagsets(db *sql.DB) error {
 
 	// every pure i+1 note, grouped by its unknown word's dictionary form
 	byBase := map[string][]cand{}
-	rows, err = db.Query(`SELECT n.id, COALESCE(n.deck_id,0), COALESCE(n.sentence,''), n.clen, m.base
+	// Word lists come from different tokenizers (AnkiMorphs/IPADIC lemmas,
+	// UniDic lemmas like 為る / チャンネル-channel), so a target matches either
+	// the dictionary form or the UniDic lemma.
+	rows, err = db.Query(`SELECT n.id, COALESCE(n.deck_id,0), COALESCE(n.sentence,''), n.clen, m.base, COALESCE(m.lemma,'')
 	   FROM notes n JOIN morphs m ON m.id = n.unk_morph WHERE n.n_unknown = 1`)
 	if err != nil {
 		return err
@@ -341,9 +386,13 @@ func computeTagsets(db *sql.DB) error {
 	for rows.Next() {
 		var c cand
 		var did int64
-		rows.Scan(&c.id, &did, &c.sent, &c.clen, &c.base)
+		var lemma string
+		rows.Scan(&c.id, &did, &c.sent, &c.clen, &c.base, &lemma)
 		c.deck = decks[did]
 		byBase[c.base] = append(byBase[c.base], c)
+		if lemma != "" && lemma != c.base {
+			byBase[lemma] = append(byBase[lemma], c)
+		}
 	}
 	rows.Close()
 	mined := minedWords(db)
@@ -362,6 +411,7 @@ func computeTagsets(db *sql.DB) error {
 		}
 		placed, tags := 0, 0
 		for _, tg := range ts.targets {
+			tg.word, _, _ = strings.Cut(tg.word, "-") // チャンネル-channel -> チャンネル
 			if mined[tg.word] {
 				continue
 			}
@@ -371,7 +421,7 @@ func computeTagsets(db *sql.DB) error {
 				if !matchAny(ts.pool, c.deck) {
 					continue
 				}
-				if labelArtifact(c.sent, tg.word) {
+				if labelArtifact(c.sent, c.base) {
 					continue
 				}
 				lo := ts.minLen

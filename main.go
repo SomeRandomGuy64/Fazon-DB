@@ -24,6 +24,7 @@ Setup / rebuild
   mdb reparse [-j 3]         re-tokenize everything (after improving the model)
   mdb recalc                 full rebuild of priority list, known words, i+N, tag sets
   mdb import-tagsets         re-read the *_daily add-on configs + targets.csv
+  mdb drop-tagset PREFIX     remove a tag set for good (re-imports skip it)
 
 Day to day
   mdb serve [-addr :8790]    web harness + live Anki sync every minute
@@ -88,6 +89,14 @@ func run(db *sql.DB, cmd string, args []string) error {
 		return computeTagsets(db)
 	case "tagsets":
 		return computeTagsets(db)
+	case "drop-tagset":
+		for _, p := range rest {
+			if err := dropTagset(db, p); err != nil {
+				return err
+			}
+			fmt.Println("dropped", p)
+		}
+		return nil
 	case "sync":
 		st, err := syncOnce(db, *days, *full)
 		if err != nil {
