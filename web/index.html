@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mining DB</title>
+<style>
+:root {
+  --bg: #f6f5f2; --panel: #ffffff; --ink: #1d1d1f; --muted: #6b6b70; --line: #e4e2dc;
+  --accent: #b5452a; --accent-ink: #fff; --known: #2f7a4d; --unknown: #c0392b; --chip: #efede7;
+  --hl: #fde8e2; --shadow: 0 1px 2px rgba(0,0,0,.05), 0 4px 16px rgba(0,0,0,.04);
+  --jp: "Noto Sans JP", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #141416; --panel: #1d1d20; --ink: #ececee; --muted: #9a9aa2; --line: #2e2e33;
+    --accent: #e0745a; --accent-ink: #1a1a1a; --known: #6cc191; --unknown: #f0806f; --chip: #2a2a2f; --hl: #3a2420;
+    --shadow: none; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 system-ui, sans-serif; }
+header { position: sticky; top: 0; z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line);
+  display: flex; align-items: center; gap: 24px; padding: 10px 24px; flex-wrap: wrap; }
+header h1 { font-size: 16px; margin: 0; letter-spacing: .02em; }
+header h1 span { color: var(--accent); }
+nav { display: flex; gap: 4px; }
+nav button { background: none; border: 0; color: var(--muted); padding: 6px 12px; border-radius: 8px; cursor: pointer; font: inherit; }
+nav button.on { background: var(--panel); color: var(--ink); box-shadow: var(--shadow); }
+#syncinfo { margin-left: auto; color: var(--muted); font-size: 12px; display: flex; gap: 10px; align-items: center; }
+main { max-width: 1180px; margin: 0 auto; padding: 20px 24px 80px; }
+.btn { background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer; font: inherit; }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn:disabled { opacity: .5; cursor: default; }
+input[type=search], input[type=text], select { background: var(--panel); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 8px; padding: 8px 12px; font: inherit; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+.stat { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; box-shadow: var(--shadow); }
+.stat .v { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stat .k { color: var(--muted); font-size: 12px; }
+h2 { font-size: 15px; margin: 28px 0 10px; }
+table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 500; color: var(--muted); font-size: 12px; }
+td.num { font-variant-numeric: tabular-nums; text-align: right; }
+tr.click { cursor: pointer; } tr.click:hover td { background: var(--chip); }
+.bar { height: 6px; background: var(--chip); border-radius: 3px; overflow: hidden; min-width: 80px; }
+.bar i { display: block; height: 100%; background: var(--known); }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+.row input[type=search] { flex: 1; min-width: 240px; }
+.cards { display: flex; flex-direction: column; gap: 8px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: grid;
+  grid-template-columns: 34px 1fr auto; gap: 12px; align-items: start; box-shadow: var(--shadow); cursor: pointer; }
+.card:hover { border-color: var(--accent); }
+.card .s { font-family: var(--jp); font-size: 17px; }
+.card .t { color: var(--muted); font-size: 13px; }
+.card .meta { color: var(--muted); font-size: 12px; margin-top: 4px; display: flex; gap: 8px; flex-wrap: wrap; }
+.card img { width: 120px; border-radius: 6px; display: block; }
+.play { width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--line); background: var(--chip); color: var(--ink); cursor: pointer; font-size: 12px; }
+.chip { background: var(--chip); border-radius: 6px; padding: 1px 7px; font-size: 12px; white-space: nowrap; }
+.chip.unk { background: var(--hl); color: var(--unknown); }
+.chip.tag { font-family: ui-monospace, monospace; font-size: 11px; }
+mark { background: var(--hl); color: var(--unknown); border-radius: 3px; padding: 0 1px; }
+.empty { color: var(--muted); padding: 30px; text-align: center; }
+.known { color: var(--known); } .unknown { color: var(--unknown); }
+.jp { font-family: var(--jp); }
+.romaji { color: var(--muted); font-size: 12px; }
+#drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(640px, 100%); background: var(--panel); border-left: 1px solid var(--line);
+  box-shadow: -8px 0 30px rgba(0,0,0,.12); transform: translateX(100%); transition: transform .18s ease; z-index: 10; overflow-y: auto; padding: 20px 24px 60px; }
+#drawer.open { transform: none; }
+#drawer .close { float: right; }
+.toks { font-family: var(--jp); font-size: 20px; line-height: 2.4; }
+.tok { display: inline-block; text-align: center; margin: 0 1px; padding: 0 2px; border-radius: 4px; cursor: pointer; vertical-align: top; line-height: 1.3; }
+.tok small { display: block; font-size: 10px; color: var(--muted); }
+.tok.u { background: var(--hl); color: var(--unknown); }
+.tok.x { cursor: default; }
+.field { margin: 14px 0; } .field .k { color: var(--muted); font-size: 12px; margin-bottom: 2px; }
+.field .v { font-family: var(--jp); white-space: pre-wrap; word-break: break-word; }
+.wordpop { background: var(--chip); border-radius: 10px; padding: 10px 12px; margin-top: 10px; display: none; }
+.pager { display: flex; gap: 8px; justify-content: center; margin-top: 16px; }
+.tsword { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 10px; padding: 10px 14px; }
+.tsword h3 { margin: 0 0 6px; font-size: 15px; font-family: var(--jp); font-weight: 600; }
+.tsword h3 .r { color: var(--muted); font-weight: 400; font-family: system-ui; font-size: 12px; margin-right: 8px; }
+.alt { display: grid; grid-template-columns: 34px 52px 1fr; gap: 8px; align-items: center; padding: 4px 0; border-top: 1px dashed var(--line); cursor: pointer; }
+.alt:first-of-type { border-top: 0; }
+.alt .pos { color: var(--muted); font: 11px ui-monospace, monospace; }
+@media (max-width: 640px) { main { padding: 14px 16px 60px; } header { padding: 10px 16px; } .card { grid-template-columns: 34px 1fr; } .card img { display: none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Mining <span>DB</span></h1>
+  <nav>
+    <button data-tab="overview" class="on">Overview</button>
+    <button data-tab="search">Cards</button>
+    <button data-tab="words">Words</button>
+    <button data-tab="tagsets">Tag sets</button>
+  </nav>
+  <div id="syncinfo"><span id="synctext"></span><button class="btn" id="syncbtn">Sync now</button></div>
+</header>
+<main id="main"></main>
+<aside id="drawer"></aside>
+<audio id="player"></audio>
+
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const api = (p, opt) => fetch(p, opt).then(r => r.ok ? r.json() : r.text().then(t => { throw new Error(t) }));
+const fmt = n => (n ?? 0).toLocaleString();
+const ago = iso => { if (!iso) return 'never'; const s = (Date.now() - new Date(iso)) / 1000;
+  return s < 90 ? 'just now' : s < 5400 ? Math.round(s/60) + ' min ago' : s < 129600 ? Math.round(s/3600) + ' h ago' : Math.round(s/86400) + ' d ago'; };
+
+// Hepburn romaji for kana readings (always shown next to Japanese)
+const KANA = {'きゃ':'kya','きゅ':'kyu','きょ':'kyo','しゃ':'sha','しゅ':'shu','しょ':'sho','ちゃ':'cha','ちゅ':'chu','ちょ':'cho','にゃ':'nya','にゅ':'nyu','にょ':'nyo',
+'ひゃ':'hya','ひゅ':'hyu','ひょ':'hyo','みゃ':'mya','みゅ':'myu','みょ':'myo','りゃ':'rya','りゅ':'ryu','りょ':'ryo','ぎゃ':'gya','ぎゅ':'gyu','ぎょ':'gyo','じゃ':'ja','じゅ':'ju','じょ':'jo',
+'びゃ':'bya','びゅ':'byu','びょ':'byo','ぴゃ':'pya','ぴゅ':'pyu','ぴょ':'pyo','しぇ':'she','ちぇ':'che','じぇ':'je','てぃ':'ti','でぃ':'di','ふぁ':'fa','ふぃ':'fi','ふぇ':'fe','ふぉ':'fo','うぃ':'wi','うぇ':'we','うぉ':'wo',
+'あ':'a','い':'i','う':'u','え':'e','お':'o','か':'ka','き':'ki','く':'ku','け':'ke','こ':'ko','さ':'sa','し':'shi','す':'su','せ':'se','そ':'so','た':'ta','ち':'chi','つ':'tsu','て':'te','と':'to',
+'な':'na','に':'ni','ぬ':'nu','ね':'ne','の':'no','は':'ha','ひ':'hi','ふ':'fu','へ':'he','ほ':'ho','ま':'ma','み':'mi','む':'mu','め':'me','も':'mo','や':'ya','ゆ':'yu','よ':'yo',
+'ら':'ra','り':'ri','る':'ru','れ':'re','ろ':'ro','わ':'wa','を':'o','ん':'n','が':'ga','ぎ':'gi','ぐ':'gu','げ':'ge','ご':'go','ざ':'za','じ':'ji','ず':'zu','ぜ':'ze','ぞ':'zo',
+'だ':'da','ぢ':'ji','づ':'zu','で':'de','ど':'do','ば':'ba','び':'bi','ぶ':'bu','べ':'be','ぼ':'bo','ぱ':'pa','ぴ':'pi','ぷ':'pu','ぺ':'pe','ぽ':'po','ゔ':'vu',
+'ぁ':'a','ぃ':'i','ぅ':'u','ぇ':'e','ぉ':'o','ゃ':'ya','ゅ':'yu','ょ':'yo','ゎ':'wa'};
+function romaji(s) {
+  s = String(s || '').replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60));
+  let out = '', i = 0;
+  while (i < s.length) {
+    if (s[i] === 'っ' && i + 1 < s.length) { const n = KANA[s.slice(i+1, i+3)] || KANA[s[i+1]]; if (n) { out += n[0] === 'c' ? 't' : n[0]; i++; continue; } }
+    if (s[i] === 'ー') { const v = out.match(/[aeiou]$/); out += v ? v[0] : ''; i++; continue; }
+    const two = KANA[s.slice(i, i+2)]; if (two) { out += two; i += 2; continue; }
+    out += KANA[s[i]] ?? s[i]; i++;
+  }
+  return out.replace(/n([aiueoy])/g, "n'$1");
+}
+const hasKana = s => /[ぁ-ゖァ-ヺ]/.test(s || '');
+const wordLabel = (base, reading) => `<span class="jp">${esc(base)}</span>` +
+  (reading && reading !== base ? ` <span class="jp">【${esc(reading)}】</span>` : '') +
+  (hasKana(reading || base) ? ` <span class="romaji">${esc(romaji(reading || base))}</span>` : '');
+
+function play(name, ev) { if (ev) ev.stopPropagation(); if (!name) return; const p = $('#player'); p.src = '/media/' + encodeURIComponent(name); p.play(); }
+
+function highlight(sentence, unknown) {
+  let s = esc(sentence.replace(/<[^>]+>/g, ''));
+  for (const u of unknown || []) { const b = u.split('【')[0]; if (b) s = s.split(esc(b)).join(`<mark>${esc(b)}</mark>`); }
+  return s;
+}
+
+function cardHTML(r, extraTags) {
+  const tags = (extraTags || r.tags || []).filter(t => !t.startsWith('_card-status')).slice(0, 4);
+  return `<div class="card" data-nid="${r.nid}">
+    <button class="play" title="Play" data-audio="${esc(r.audio)}">▶</button>
+    <div>
+      <div class="s">${highlight(r.sentence, r.unknown)}</div>
+      ${r.translation ? `<div class="t">${esc(r.translation)}</div>` : ''}
+      <div class="meta">
+        <span class="chip">i+${r.n_unknown}</span>
+        ${(r.unknown || []).slice(0, 3).map(u => `<span class="chip unk jp">${esc(u)}</span>`).join('')}
+        ${r.unk_rank ? `<span>rank ${fmt(r.unk_rank)}</span>` : ''}
+        <span>${esc(r.deck.replace(/^Database::/, ''))}</span>
+        ${r.in_anki ? '' : '<span class="chip">not in Anki</span>'}
+        ${tags.map(t => `<span class="chip tag">${esc(t)}</span>`).join('')}
+      </div>
+    </div>
+    ${r.image ? `<img loading="lazy" src="/media/${encodeURIComponent(r.image)}" alt="">` : '<span></span>'}
+  </div>`;
+}
+
+function wireCards(root) {
+  root.querySelectorAll('[data-audio]').forEach(b => b.onclick = ev => play(b.dataset.audio, ev));
+  root.querySelectorAll('[data-nid]').forEach(c => c.onclick = () => openNote(c.dataset.nid));
+}
+
+// ---------------------------------------------------------------- tabs
+const tabs = {
+  async overview() {
+    const s = await api('/api/status');
+    const ip = s.i_plus || {};
+    $('#main').innerHTML = `
+      <div class="grid">
+        <div class="stat"><div class="v">${fmt(s.known_words)}</div><div class="k">known words (of ${fmt(s.words)})</div></div>
+        <div class="stat"><div class="v">${(s.token_coverage_pct || 0).toFixed(1)}%</div><div class="k">of all words in your cards are known</div></div>
+        <div class="stat"><div class="v">${fmt(ip['i+1'])}</div><div class="k">i+1 cards</div></div>
+        <div class="stat"><div class="v">${fmt(ip['i+0'])}</div><div class="k">i+0 cards</div></div>
+        <div class="stat"><div class="v">${fmt(ip['i+≥2'])}</div><div class="k">i+≥2 cards</div></div>
+        <div class="stat"><div class="v">${fmt(s.pool_notes)}</div><div class="k">subs2srs pool cards (${fmt(s.notes)} total)</div></div>
+      </div>
+      <h2>Known words by source</h2>
+      <div class="row">${Object.entries(s.known_by_source || {}).map(([k, v]) => `<span class="chip">${esc(k)}: ${fmt(v)}</span>`).join('')}</div>
+      <h2>Parser</h2>
+      <div class="row"><span class="chip">model ${esc(s.model)}</span>
+        <span>${fmt(s.parsed_current_model)} cards parsed with the current model${s['parsed_older_model_or_unparsed'] ? `, <b class="unknown">${fmt(s['parsed_older_model_or_unparsed'])} need parsing</b> (<code>mdb parse</code>)` : ''}</span></div>
+      <h2>Next to mine — i+1 by priority</h2>
+      <div class="cards" id="next"></div>
+      <h2>Tag sets</h2>
+      <table><tr><th>Set</th><th class="num">Words placed</th><th class="num">Tags</th><th></th></tr>
+      ${(s.tagsets || []).map(t => `<tr class="click" data-prefix="${esc(t.prefix)}"><td><code>${esc(t.prefix)}</code></td>
+        <td class="num">${fmt(t.placed)} / ${fmt(t.targets)}</td><td class="num">${fmt(t.tags)}</td>
+        <td><div class="bar"><i style="width:${t.targets ? 100 * t.placed / t.targets : 0}%"></i></div></td></tr>`).join('')}</table>
+      <p class="romaji">Last import ${ago(s.last_import)} · last backup ${ago(s.last_backup)}</p>`;
+    document.querySelectorAll('tr[data-prefix]').forEach(tr => tr.onclick = () => { state.tsPrefix = tr.dataset.prefix; show('tagsets'); });
+    const next = await api('/api/search?q=' + encodeURIComponent('i:1 pool:1') + '&limit=12');
+    $('#next').innerHTML = next.map(r => cardHTML(r)).join('') || '<div class="empty">No i+1 cards.</div>';
+    wireCards($('#next'));
+  },
+
+  async search() {
+    $('#main').innerHTML = `
+      <div class="row"><input type="search" id="q" placeholder="e.g.  i:1 deck:Database::higuchi_mengen*   ·   tag:!higuchi-top2000::0012   ·   word:分かる   ·   unk:守備   ·   any text" value="${esc(state.q)}">
+        <button class="btn primary" id="go">Search</button></div>
+      <div class="cards" id="res"></div><div class="pager" id="pg"></div>`;
+    const run = async () => {
+      state.q = $('#q').value;
+      $('#res').innerHTML = '<div class="empty">Searching…</div>';
+      try {
+        const rs = await api(`/api/search?limit=50&offset=${state.off}&q=` + encodeURIComponent(state.q));
+        $('#res').innerHTML = rs.map(r => cardHTML(r)).join('') || '<div class="empty">No cards match.</div>';
+        wireCards($('#res'));
+        $('#pg').innerHTML = (state.off ? '<button class="btn" id="prev">← Prev</button>' : '') + (rs.length === 50 ? '<button class="btn" id="nxt">Next →</button>' : '');
+        if ($('#prev')) $('#prev').onclick = () => { state.off = Math.max(0, state.off - 50); run(); };
+        if ($('#nxt')) $('#nxt').onclick = () => { state.off += 50; run(); };
+      } catch (e) { $('#res').innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+    };
+    $('#go').onclick = () => { state.off = 0; run(); };
+    $('#q').onkeydown = e => { if (e.key === 'Enter') { state.off = 0; run(); } };
+    run();
+  },
+
+  async words() {
+    $('#main').innerHTML = `
+      <div class="row"><input type="search" id="wq" placeholder="Filter words (dictionary form or reading)" value="${esc(state.wq)}">
+        <select id="wk"><option value="">All</option><option value="0">Unknown</option><option value="1">Known</option></select></div>
+      <table id="wt"></table><div class="pager" id="wpg"></div>`;
+    $('#wk').value = state.wk;
+    const run = async () => {
+      state.wq = $('#wq').value; state.wk = $('#wk').value;
+      const ws = await api(`/api/words?limit=100&offset=${state.woff}&known=${state.wk}&q=` + encodeURIComponent(state.wq));
+      $('#wt').innerHTML = `<tr><th class="num">Rank</th><th>Word</th><th>POS</th><th class="num">Freq</th><th class="num">i+1 cards</th><th>Status</th><th></th></tr>` +
+        ws.map(w => `<tr><td class="num">${fmt(w.rank)}</td><td>${wordLabel(w.base, w.reading)}</td><td class="romaji">${esc(w.pos)}</td>
+          <td class="num">${fmt(w.freq)}</td><td class="num">${w.i1_cards ? `<a href="#" data-unk="${esc(w.base)}">${fmt(w.i1_cards)}</a>` : 0}</td>
+          <td class="${w.known ? 'known' : 'unknown'}">${w.known ? 'known' : 'unknown'}${w.src ? ` <span class="romaji">(${esc(w.src)})</span>` : ''}</td>
+          <td><button class="btn" data-mark="${w.known ? 'unknown' : 'known'}" data-b="${esc(w.base)}" data-r="${esc(w.reading)}">Mark ${w.known ? 'unknown' : 'known'}</button></td></tr>`).join('');
+      $('#wt').querySelectorAll('[data-mark]').forEach(b => b.onclick = async () => {
+        b.disabled = true; await api('/api/word/mark', {method: 'POST', body: JSON.stringify({base: b.dataset.b, reading: b.dataset.r, how: b.dataset.mark})}); run(); });
+      $('#wt').querySelectorAll('[data-unk]').forEach(a => a.onclick = e => { e.preventDefault(); state.q = 'i:1 unk:' + a.dataset.unk; state.off = 0; show('search'); });
+      $('#wpg').innerHTML = (state.woff ? '<button class="btn" id="wprev">← Prev</button>' : '') + (ws.length === 100 ? '<button class="btn" id="wnext">Next →</button>' : '');
+      if ($('#wprev')) $('#wprev').onclick = () => { state.woff = Math.max(0, state.woff - 100); run(); };
+      if ($('#wnext')) $('#wnext').onclick = () => { state.woff += 100; run(); };
+    };
+    $('#wq').onkeydown = e => { if (e.key === 'Enter') { state.woff = 0; run(); } };
+    $('#wk').onchange = () => { state.woff = 0; run(); };
+    run();
+  },
+
+  async tagsets() {
+    const s = await api('/api/status');
+    if (!state.tsPrefix && s.tagsets?.length) state.tsPrefix = s.tagsets[0].prefix;
+    $('#main').innerHTML = `<div class="row"><select id="ts">${(s.tagsets || []).map(t => `<option ${t.prefix === state.tsPrefix ? 'selected' : ''}>${esc(t.prefix)}</option>`).join('')}</select>
+      <span class="romaji">Recomputed on every sync — learn a word and its tags disappear.</span></div><div id="tsl"></div><div class="pager" id="tpg"></div>`;
+    const run = async () => {
+      state.tsPrefix = $('#ts').value;
+      const rs = await api(`/api/tagset?limit=25&offset=${state.toff}&prefix=` + encodeURIComponent(state.tsPrefix));
+      $('#tsl').innerHTML = rs.map(w => `<div class="tsword"><h3><span class="r">#${w.rank}</span>${wordLabel(w.word, '')}</h3>
+        ${w.cards.map(c => `<div class="alt" data-nid="${c.nid}"><button class="play" data-audio="${esc(c.audio)}">▶</button>
+          <span class="pos">${esc(c.tags[0].split('::').pop())}</span><span class="jp">${highlight(c.sentence, c.unknown)}
+          ${c.translation ? `<span class="romaji"> — ${esc(c.translation)}</span>` : ''}</span></div>`).join('')}</div>`).join('') || '<div class="empty">Nothing tagged.</div>';
+      wireCards($('#tsl'));
+      $('#tpg').innerHTML = (state.toff ? '<button class="btn" id="tprev">← Prev</button>' : '') + (rs.length === 25 ? '<button class="btn" id="tnext">Next →</button>' : '');
+      if ($('#tprev')) $('#tprev').onclick = () => { state.toff = Math.max(0, state.toff - 25); run(); };
+      if ($('#tnext')) $('#tnext').onclick = () => { state.toff += 25; run(); };
+    };
+    $('#ts').onchange = () => { state.toff = 0; run(); };
+    run();
+  },
+};
+
+async function openNote(nid) {
+  const n = await api('/api/note/' + nid);
+  const f = n.fields, audio = (f['Sentence Audio'].match(/\[(?:audio|sound):([^\]]+)\]/) || [])[1], img = (f.Image.match(/src="([^"]+)"/) || [])[1];
+  const toks = (n.tokens || []).map((t, i) => t.id
+    ? `<span class="tok ${t.known ? '' : 'u'}" data-i="${i}">${esc(t.s)}<small>${esc(t.reading !== t.s ? t.reading : '')}</small></span>`
+    : `<span class="tok x">${esc(t.s)}<small>&nbsp;</small></span>`).join('');
+  const fld = (k, v, raw) => v ? `<div class="field"><div class="k">${k}</div><div class="v">${raw ? v : esc(v)}</div></div>` : '';
+  $('#drawer').innerHTML = `<button class="btn close" id="dclose">Close</button>
+    <h2 style="margin-top:4px">Card ${n.nid} <span class="chip">i+${n.n_unknown}</span> ${n.in_anki ? '' : '<span class="chip">not in Anki</span>'}</h2>
+    <div class="romaji">${esc(n.deck)}</div>
+    ${img ? `<img src="/media/${encodeURIComponent(img)}" style="width:100%;border-radius:10px;margin-top:10px" alt="">` : ''}
+    <div class="row" style="margin-top:10px">${audio ? `<button class="btn primary" id="dplay">▶ Sentence audio</button>` : ''}</div>
+    <div class="toks">${toks}</div>
+    <div class="wordpop" id="wp"></div>
+    ${fld('Translation (Notes)', f.Notes)}
+    ${fld('Word', f.Word)}
+    ${fld('Definition', f.Definition, true)}
+    ${fld('Episode summary', n.summary)}
+    ${fld('Context lines', (n.context_lines || '').split(' | ').join('\n'))}
+    ${fld('Context field', f.Context)}
+    <div class="field"><div class="k">Tags</div><div class="row">${n.tags.map(t => `<span class="chip tag">${esc(t)}</span>`).join('')}</div></div>
+    ${fld('Cards', (n.cards || []).map(c => `${c.id}  ${c.deck}  type ${c.type}  ivl ${c.ivl}d`).join('\n'))}
+    <div class="romaji">Parsed with model ${esc(n.parsed_model)}</div>`;
+  $('#drawer').classList.add('open');
+  $('#dclose').onclick = () => $('#drawer').classList.remove('open');
+  if (audio) { $('#dplay').onclick = () => play(audio); }
+  $('#drawer').querySelectorAll('.tok[data-i]').forEach(el => el.onclick = () => {
+    const t = n.tokens[+el.dataset.i];
+    $('#wp').style.display = 'block';
+    $('#wp').innerHTML = `${wordLabel(t.base, t.reading)} · rank ${fmt(t.rank)} ·
+      <span class="${t.known ? 'known' : 'unknown'}">${t.known ? 'known' : 'unknown'}</span>${t.src ? ` <span class="romaji">(${esc(t.src)})</span>` : ''}
+      <div class="row" style="margin:8px 0 0"><button class="btn" id="wmark">Mark ${t.known ? 'unknown' : 'known'}</button>
+      <button class="btn" id="wfind">i+1 cards for this word</button></div>`;
+    $('#wmark').onclick = async () => { await api('/api/word/mark', {method: 'POST', body: JSON.stringify({base: t.base, reading: t.reading, how: t.known ? 'unknown' : 'known'})}); openNote(nid); };
+    $('#wfind').onclick = () => { $('#drawer').classList.remove('open'); state.q = 'i:1 unk:' + t.base; state.off = 0; show('search'); };
+  });
+}
+
+const state = { q: 'i:1 pool:1', off: 0, wq: '', wk: '0', woff: 0, tsPrefix: '', toff: 0, tab: 'overview' };
+try { Object.assign(state, JSON.parse(localStorage.getItem('mdb-state') || '{}')); } catch {}
+function show(tab) {
+  state.tab = tab;
+  try { localStorage.setItem('mdb-state', JSON.stringify(state)); } catch {}
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+  tabs[tab]().catch(e => $('#main').innerHTML = `<div class="empty">${esc(e.message)}</div>`);
+}
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => show(b.dataset.tab));
+document.addEventListener('keydown', e => { if (e.key === 'Escape') $('#drawer').classList.remove('open'); });
+
+async function refreshSync() { try { const s = await api('/api/status'); $('#synctext').textContent = 'Anki sync ' + ago(s.last_sync); } catch {} }
+$('#syncbtn').onclick = async () => { $('#syncbtn').disabled = true; $('#synctext').textContent = 'Syncing…';
+  try { const r = await api('/api/sync', {method: 'POST'}); $('#synctext').textContent = r.result; } catch (e) { $('#synctext').textContent = e.message; }
+  $('#syncbtn').disabled = false; };
+setInterval(refreshSync, 60000); refreshSync();
+show(state.tab);
+</script>
+</body>
+</html>
