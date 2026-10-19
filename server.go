@@ -279,15 +279,32 @@ func listWords(db *sql.DB, q, known string, limit, offset int) ([]wordRow, error
 }
 
 type tagsetRank struct {
-	Rank  int         `json:"rank"`
-	Word  string      `json:"word"`
+	Rank    int         `json:"rank"`
+	Word    string      `json:"word"`
+	Reading string      `json:"reading"`
 	Cards []searchRow `json:"cards"`
 }
 
 func tagsetView(db *sql.DB, prefix string, limit, offset int) ([]tagsetRank, error) {
-	rows, err := db.Query(`SELECT a.rank, a.word, a.note_id, a.tag FROM tagset_assign a JOIN tagsets t ON t.id=a.tagset_id
-	   WHERE t.prefix=? AND a.rank IN (SELECT DISTINCT a2.rank FROM tagset_assign a2 WHERE a2.tagset_id=t.id ORDER BY a2.rank LIMIT ? OFFSET ?)
-	   ORDER BY a.rank, a.pos`, prefix, limit, offset)
+	var tsid int64
+	if err := db.QueryRow(`SELECT id FROM tagsets WHERE prefix=?`, prefix).Scan(&tsid); err != nil {
+		return []tagsetRank{}, nil
+	}
+	var ranks []int64
+	rr, err := db.Query(`SELECT DISTINCT rank FROM tagset_assign WHERE tagset_id=? ORDER BY rank LIMIT ? OFFSET ?`, tsid, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	for rr.Next() {
+		var r int64
+		rr.Scan(&r)
+		ranks = append(ranks, r)
+	}
+	rr.Close()
+	if len(ranks) == 0 {
+		return []tagsetRank{}, nil
+	}
+	rows, err := db.Query(`SELECT rank, word, note_id, tag FROM tagset_assign WHERE tagset_id=? AND rank IN (`+joinIDs(ranks)+`) ORDER BY rank, pos`, tsid)
 	if err != nil {
 		return nil, err
 	}
@@ -307,7 +324,9 @@ func tagsetView(db *sql.DB, prefix string, limit, offset int) ([]tagsetRank, err
 	out := []tagsetRank{}
 	for _, x := range as {
 		if len(out) == 0 || out[len(out)-1].Rank != x.rank {
-			out = append(out, tagsetRank{Rank: x.rank, Word: x.word})
+			var rd string // reading of the word on its best card
+			db.QueryRow(`SELECT m.reading FROM notes n JOIN morphs m ON m.id=n.unk_morph WHERE n.id=?`, x.nid).Scan(&rd)
+			out = append(out, tagsetRank{Rank: x.rank, Word: x.word, Reading: rd})
 		}
 		rs, err := search(db, "nid:"+strconv.FormatInt(x.nid, 10), 1, 0)
 		if err == nil && len(rs) == 1 {

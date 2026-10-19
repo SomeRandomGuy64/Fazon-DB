@@ -131,7 +131,7 @@ function romaji(s) {
 const hasKana = s => /[ぁ-ゖァ-ヺ]/.test(s || '');
 const wordLabel = (base, reading) => `<span class="jp">${esc(base)}</span>` +
   (reading && reading !== base ? ` <span class="jp">【${esc(reading)}】</span>` : '') +
-  (hasKana(reading || base) ? ` <span class="romaji">${esc(romaji(reading || base))}</span>` : '');
+  (/^[ぁ-ゖァ-ヺー]+$/.test(reading || base) ? ` <span class="romaji">${esc(romaji(reading || base))}</span>` : '');
 
 function play(name, ev) { if (ev) ev.stopPropagation(); if (!name) return; const p = $('#player'); p.src = '/media/' + encodeURIComponent(name); p.play(); }
 
@@ -255,7 +255,7 @@ const tabs = {
     const run = async () => {
       state.tsPrefix = $('#ts').value;
       const rs = await api(`/api/tagset?limit=25&offset=${state.toff}&prefix=` + encodeURIComponent(state.tsPrefix));
-      $('#tsl').innerHTML = rs.map(w => `<div class="tsword"><h3><span class="r">#${w.rank}</span>${wordLabel(w.word, '')}</h3>
+      $('#tsl').innerHTML = rs.map(w => `<div class="tsword"><h3><span class="r">#${w.rank}</span>${wordLabel(w.word, w.reading)}</h3>
         ${w.cards.map(c => `<div class="alt" data-nid="${c.nid}"><button class="play" data-audio="${esc(c.audio)}">▶</button>
           <span class="pos">${esc(c.tags[0].split('::').pop())}</span><span class="jp">${highlight(c.sentence, c.unknown)}
           ${c.translation ? `<span class="romaji"> — ${esc(c.translation)}</span>` : ''}</span></div>`).join('')}</div>`).join('') || '<div class="empty">Nothing tagged.</div>';
@@ -273,7 +273,7 @@ async function openNote(nid) {
   const n = await api('/api/note/' + nid);
   const f = n.fields, audio = (f['Sentence Audio'].match(/\[(?:audio|sound):([^\]]+)\]/) || [])[1], img = (f.Image.match(/src="([^"]+)"/) || [])[1];
   const toks = (n.tokens || []).map((t, i) => t.id
-    ? `<span class="tok ${t.known ? '' : 'u'}" data-i="${i}">${esc(t.s)}<small>${esc(t.reading !== t.s ? t.reading : '')}</small></span>`
+    ? `<span class="tok ${t.known ? '' : 'u'}" data-i="${i}">${esc(t.s)}<small>${/[一-龯々〆ヶ]/.test(t.s) ? esc(t.reading) : '&nbsp;'}</small></span>`
     : `<span class="tok x">${esc(t.s)}<small>&nbsp;</small></span>`).join('');
   const fld = (k, v, raw) => v ? `<div class="field"><div class="k">${k}</div><div class="v">${raw ? v : esc(v)}</div></div>` : '';
   $('#drawer').innerHTML = `<button class="btn close" id="dclose">Close</button>

@@ -156,6 +156,7 @@ func syncOnce(db *sql.DB, days int, full bool) (syncStats, error) {
 		return st, err
 	}
 	st.cards = len(changedCards)
+	setMeta(db, "last_sync", time.Now().Format(time.RFC3339))
 	if len(touchedNotes) == 0 {
 		return st, nil
 	}
@@ -198,7 +199,6 @@ func syncOnce(db *sql.DB, days int, full bool) (syncStats, error) {
 		}
 		st.tagsets = true
 	}
-	setMeta(db, "last_sync", time.Now().Format(time.RFC3339))
 	return st, nil
 }
 

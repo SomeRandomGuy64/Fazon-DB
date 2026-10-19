@@ -138,6 +138,7 @@ CREATE TABLE IF NOT EXISTS tagset_assign(
 );
 CREATE INDEX IF NOT EXISTS tagset_assign_tag ON tagset_assign(tag);
 CREATE INDEX IF NOT EXISTS tagset_assign_note ON tagset_assign(note_id);
+CREATE INDEX IF NOT EXISTS tagset_assign_set ON tagset_assign(tagset_id, rank, pos);
 
 CREATE TABLE IF NOT EXISTS mined(note_id INTEGER NOT NULL, tag TEXT, word TEXT, at INTEGER NOT NULL);
 
