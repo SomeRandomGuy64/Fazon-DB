@@ -183,7 +183,7 @@ func prepareMine(db *sql.DB, nid int64, word string) (int64, error) {
 
 func imgName(field string) string {
 	if m := reImg.FindStringSubmatch(field); m != nil {
-		return m[1]
+		return unescapeSrc(m[1])
 	}
 	return ""
 }

@@ -4,7 +4,7 @@ After=network-online.target
 
 [Service]
 WorkingDirectory=%h/Language Learning/mining-db
-ExecStart=%h/Language Learning/mining-db/mdb serve
+ExecStart="%h/Language Learning/mining-db/mdb" serve
 Restart=on-failure
 RestartSec=30
 

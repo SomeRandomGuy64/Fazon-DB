@@ -28,6 +28,18 @@ tag sets are kept up to date incrementally, so there is never a full recalc.
 | Backup | `backup.go`. `VACUUM INTO` snapshot, zstd, scp to `root@89.167.79.200:/var/backups/mining-db`. Keeps 14 there and 3 locally |
 | Mining | `mine.go`. `alternates` / `prepare` / `mined` for the `/mvj-mine` skill |
 
+## Long-term: the database first, Anki only for reviews
+
+- New subs2srs deck: `./mdb import-apkg path/to/deck.apkg`. It never touches Anki. Media goes
+  into `mining-db/media/`, the cards are tokenized right away and join the tag-set pools.
+- Mining (`/mvj-mine`): `mdb prepare` creates the card straight in Study Deck when its note only
+  lives in the database. Known words are saved in the `learned` table for good.
+- `./mdb anki-prune` (dry run) / `-apply` removes pool notes from Anki once the database fully
+  holds them (parsed, media in `media/`, never studied).
+- Moving to another SRS: `./mdb export DIR` writes `notes.jsonl` and `known_words.csv`.
+  `./mdb import-known FILE` reads known words back from any app. `sync.go` is the only
+  Anki-specific part to replace.
+
 ## Common jobs
 
 - **Improved the model?** Replace `jev_parser_test/models/best`, then run `./mdb parse` (or

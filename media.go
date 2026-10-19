@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,7 +29,7 @@ func noteMedia(fields ...string) []string {
 			out = append(out, m[1])
 		}
 		for _, m := range reImgAll.FindAllStringSubmatch(f, -1) {
-			out = append(out, m[1])
+			out = append(out, unescapeSrc(m[1]))
 		}
 	}
 	return out
@@ -103,6 +104,14 @@ func cmdMediaAdopt(db *sql.DB) error {
 		mediaStore, linked, copied, have, missing, missingEx, time.Since(t0).Round(time.Second))
 	setMeta(db, "media_missing", fmt.Sprint(missing))
 	return nil
+}
+
+// unescapeSrc decodes a URL-encoded <img src> (Anki encodes # and spaces).
+func unescapeSrc(s string) string {
+	if u, err := url.PathUnescape(s); err == nil {
+		return u
+	}
+	return s
 }
 
 func copyFile(src, dst string) error {
