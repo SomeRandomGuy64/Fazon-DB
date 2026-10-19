@@ -159,11 +159,85 @@ type apkgModel struct {
 	fields []string
 }
 
+// cmdImportApkg imports one deck and updates everything incrementally.
 func cmdImportApkg(db *sql.DB, path, deckOverride string) error {
 	t0 := time.Now()
-	zr, err := zip.OpenReader(path)
+	ids, deckID, deckName, err := importApkgNotes(db, path, deckOverride)
 	if err != nil {
 		return err
+	}
+	// tokenize with the reading model + incremental recalc
+	writeMu.Lock()
+	defer writeMu.Unlock()
+	touched, err := parseNotes(db, ids)
+	if err != nil {
+		return err
+	}
+	flipped, err := refreshKnown(db, keys(touched))
+	if err != nil {
+		return err
+	}
+	if _, err := refreshNotesByID(db, ids); err != nil {
+		return err
+	}
+	if _, err := refreshNotes(db, flipped); err != nil {
+		return err
+	}
+	if err := refreshPriority(db); err != nil {
+		return err
+	}
+	if err := computeTagsets(db); err != nil {
+		return err
+	}
+	logDeckSplit(db, deckID, deckName)
+	log.Printf("done in %s", time.Since(t0).Round(time.Second))
+	resetSharedWorker()
+	return nil
+}
+
+// cmdImportApkgBatch imports many decks, then parses them all in one go
+// (parallel workers) and runs one full recalc. Each arg is FILE or
+// FILE=Deck::Name to file it under a different deck.
+func cmdImportApkgBatch(db *sql.DB, args []string, deckOverride string, workers int) error {
+	type dk struct {
+		id   int64
+		name string
+	}
+	var done []dk
+	for _, a := range args {
+		path, deck := a, deckOverride
+		if i := strings.LastIndex(a, ".apkg="); i >= 0 {
+			path, deck = a[:i+5], a[i+6:]
+		}
+		_, id, name, err := importApkgNotes(db, path, deck)
+		if err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+		done = append(done, dk{id, name})
+	}
+	if err := cmdParse(db, workers, false); err != nil {
+		return err
+	}
+	if err := recalcAll(db); err != nil {
+		return err
+	}
+	for _, d := range done {
+		logDeckSplit(db, d.id, d.name)
+	}
+	return nil
+}
+
+func logDeckSplit(db *sql.DB, deckID int64, deckName string) {
+	var i0, i1, i2 int
+	db.QueryRow(`SELECT COALESCE(SUM(n_unknown=0),0), COALESCE(SUM(n_unknown=1),0), COALESCE(SUM(n_unknown>=2),0) FROM notes WHERE deck_id=?`, deckID).Scan(&i0, &i1, &i2)
+	log.Printf("%s: %d cards · i+0 %d · i+1 %d · i+≥2 %d", deckName, i0+i1+i2, i0, i1, i2)
+}
+
+// importApkgNotes reads an .apkg into notes + the media store (no parsing).
+func importApkgNotes(db *sql.DB, path, deckOverride string) ([]int64, int64, string, error) {
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		return nil, 0, "", err
 	}
 	defer zr.Close()
 	files := map[string]*zip.File{}
@@ -172,7 +246,7 @@ func cmdImportApkg(db *sql.DB, path, deckOverride string) error {
 	}
 	tmp, err := os.MkdirTemp(filepath.Dir(dbPath), "apkg-")
 	if err != nil {
-		return err
+		return nil, 0, "", err
 	}
 	defer os.RemoveAll(tmp)
 
@@ -181,24 +255,24 @@ func cmdImportApkg(db *sql.DB, path, deckOverride string) error {
 	case files["collection.anki21b"] != nil:
 		zst := filepath.Join(tmp, "c.zst")
 		if err := extract(files["collection.anki21b"], zst); err != nil {
-			return err
+			return nil, 0, "", err
 		}
 		if out, err := exec.Command("zstd", "-q", "-d", zst, "-o", colPath).CombinedOutput(); err != nil {
-			return fmt.Errorf("zstd: %v %s", err, out)
+			return nil, 0, "", fmt.Errorf("zstd: %v %s", err, out)
 		}
 	case files["collection.anki21"] != nil:
 		err = extract(files["collection.anki21"], colPath)
 	case files["collection.anki2"] != nil:
 		err = extract(files["collection.anki2"], colPath)
 	default:
-		return fmt.Errorf("%s: no collection inside", path)
+		return nil, 0, "", fmt.Errorf("%s: no collection inside", path)
 	}
 	if err != nil {
-		return err
+		return nil, 0, "", err
 	}
 	col, err := sql.Open("sqlite3_anki", "file:"+colPath+"?mode=ro")
 	if err != nil {
-		return err
+		return nil, 0, "", err
 	}
 	defer col.Close()
 
@@ -228,7 +302,7 @@ func cmdImportApkg(db *sql.DB, path, deckOverride string) error {
 	} else { // newer schema
 		rows, err := col.Query(`SELECT nt.id, nt.name, f.ord, f.name FROM notetypes nt JOIN fields f ON f.ntid = nt.id ORDER BY nt.id, f.ord`)
 		if err != nil {
-			return err
+			return nil, 0, "", err
 		}
 		for rows.Next() {
 			var id int64
@@ -284,7 +358,7 @@ func cmdImportApkg(db *sql.DB, path, deckOverride string) error {
 	if err := db.QueryRow(`SELECT id FROM decks WHERE name=?`, deckName).Scan(&deckID); err != nil {
 		deckID = time.Now().UnixMilli()
 		if _, err := db.Exec(`INSERT INTO decks(id, name, is_pool) VALUES(?,?,?)`, deckID, deckName, b2i(strings.HasPrefix(deckName, "Database::"))); err != nil {
-			return err
+			return nil, 0, "", err
 		}
 	}
 
@@ -297,7 +371,7 @@ func cmdImportApkg(db *sql.DB, path, deckOverride string) error {
 		rc.Close()
 		var mm map[string]string
 		if json.Unmarshal(b, &mm) != nil {
-			return fmt.Errorf("media map is not JSON (newer .apkg format) — export with legacy media or let Claude add protobuf support")
+			return nil, 0, "", fmt.Errorf("media map is not JSON (newer .apkg format) — export with legacy media or let Claude add protobuf support")
 		}
 		for idx, name := range mm {
 			zf := files[idx]
@@ -309,7 +383,7 @@ func cmdImportApkg(db *sql.DB, path, deckOverride string) error {
 				continue
 			}
 			if err := extract(zf, dst); err != nil {
-				return err
+				return nil, 0, "", err
 			}
 			nMedia++
 		}
@@ -318,7 +392,7 @@ func cmdImportApkg(db *sql.DB, path, deckOverride string) error {
 	// notes
 	rows, err := col.Query(`SELECT id, guid, mid, mod, tags, flds FROM notes ORDER BY id`)
 	if err != nil {
-		return err
+		return nil, 0, "", err
 	}
 	type in struct {
 		id, mid, mod int64
@@ -337,7 +411,7 @@ func cmdImportApkg(db *sql.DB, path, deckOverride string) error {
 
 	tx, err := db.Begin()
 	if err != nil {
-		return err
+		return nil, 0, "", err
 	}
 	sums := map[string]int64{}
 	var ids []int64
@@ -364,7 +438,7 @@ func cmdImportApkg(db *sql.DB, path, deckOverride string) error {
 					res, err := tx.Exec(`INSERT INTO summaries(text) VALUES(?)`, summary)
 					if err != nil {
 						tx.Rollback()
-						return err
+						return nil, 0, "", err
 					}
 					s, _ = res.LastInsertId()
 				}
@@ -382,8 +456,15 @@ func cmdImportApkg(db *sql.DB, path, deckOverride string) error {
 		} else {
 			var clash int
 			tx.QueryRow(`SELECT COUNT(*) FROM notes WHERE id=?`, id).Scan(&clash)
-			if clash > 0 {
-				nextID++
+			if clash > 0 { // take the next id that is actually free
+				for {
+					nextID++
+					var taken int
+					tx.QueryRow(`SELECT COUNT(*) FROM notes WHERE id=?`, nextID).Scan(&taken)
+					if taken == 0 {
+						break
+					}
+				}
 				id = nextID
 			}
 			added++
@@ -396,7 +477,7 @@ func cmdImportApkg(db *sql.DB, path, deckOverride string) error {
 			id, n.guid, deckID, n.mod, v["sentence"], v["sentence_audio"], v["word"], v["image"], v["notes"], sid, lines)
 		if err != nil {
 			tx.Rollback()
-			return err
+			return nil, 0, "", err
 		}
 		for _, t := range strings.Fields(n.tags) {
 			tx.Exec(`INSERT OR IGNORE INTO note_tags(note_id, tag) VALUES(?,?)`, id, t)
@@ -404,39 +485,11 @@ func cmdImportApkg(db *sql.DB, path, deckOverride string) error {
 		ids = append(ids, id)
 	}
 	if err := tx.Commit(); err != nil {
-		return err
+		return nil, 0, "", err
 	}
 	log.Printf("import-apkg %s → %s: %d new, %d updated notes, %d media files", filepath.Base(path), deckName, added, updated, nMedia)
 
-	// tokenize with the reading model + incremental recalc
-	writeMu.Lock()
-	defer writeMu.Unlock()
-	touched, err := parseNotes(db, ids)
-	if err != nil {
-		return err
-	}
-	flipped, err := refreshKnown(db, keys(touched))
-	if err != nil {
-		return err
-	}
-	_ = flipped
-	if _, err := refreshNotesByID(db, ids); err != nil {
-		return err
-	}
-	if _, err := refreshNotes(db, flipped); err != nil {
-		return err
-	}
-	if err := refreshPriority(db); err != nil {
-		return err
-	}
-	if err := computeTagsets(db); err != nil {
-		return err
-	}
-	var i0, i1, i2 int
-	db.QueryRow(`SELECT SUM(n_unknown=0), SUM(n_unknown=1), SUM(n_unknown>=2) FROM notes WHERE deck_id=?`, deckID).Scan(&i0, &i1, &i2)
-	log.Printf("%s: i+0 %d · i+1 %d · i+≥2 %d (done in %s)", deckName, i0, i1, i2, time.Since(t0).Round(time.Second))
-	resetSharedWorker()
-	return nil
+	return ids, deckID, deckName, nil
 }
 
 func extract(f *zip.File, dst string) error {

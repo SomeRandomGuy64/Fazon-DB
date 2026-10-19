@@ -38,6 +38,7 @@ Day to day
 
 Long-term (database first, Anki only for reviews)
   mdb import-apkg FILE.apkg [-deck NAME]   add a subs2srs deck straight to the database
+  mdb import-apkg A.apkg B.apkg=Deck::Name …   batch: import all, then one parse + recalc
   mdb media-adopt            hard-link every pool clip/screenshot into mining-db/media
   mdb export DIR [QUERY]     portable dump (notes.jsonl + known_words.csv) for any SRS
   mdb import-known FILE      mark words known from any app's export (word[,reading] per line)
@@ -146,12 +147,10 @@ func run(db *sql.DB, cmd string, args []string) error {
 		if len(rest) < 1 {
 			return fmt.Errorf("usage: mdb import-apkg FILE.apkg [-deck NAME]")
 		}
-		for _, f := range rest {
-			if err := cmdImportApkg(db, f, *deck); err != nil {
-				return err
-			}
+		if len(rest) == 1 && !strings.Contains(rest[0], ".apkg=") {
+			return cmdImportApkg(db, rest[0], *deck)
 		}
-		return nil
+		return cmdImportApkgBatch(db, rest, *deck, *jobs)
 	case "media-adopt":
 		return cmdMediaAdopt(db)
 	case "export":
