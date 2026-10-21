@@ -1,7 +1,9 @@
 """JSONL tokenizer worker for Fazon-DB: Faizan's reading-disambiguation model.
 
 UniDic (fugashi) splits the text; the ModernBERT cross-encoder in
-jev_parser_test/models/best picks the reading of every homograph token.
+jev_parser_test/models/best picks the reading of every homograph token, with
+the rd_config extras (deterministic rules, hybrid variant model) applied the
+same way reading_disambig.Disambiguator does.
 
 stdin, one JSON object per line:
     {"lines": [{"id": 123, "text": "..."}, ...]}
@@ -79,7 +81,8 @@ class Worker(RD.Disambiguator):
 
     def _tokens(self, text, prev, next, todo):
         toks, pos = [], 0
-        for w in C.tagger()(text):
+        ws = list(C.tagger()(text))
+        for k, w in enumerate(ws):
             start = text.find(w.surface, pos)
             start = pos if start < 0 else start
             pos = start + len(w.surface)
@@ -89,13 +92,22 @@ class Worker(RD.Disambiguator):
                      p2=w.feature.pos2 or "", p3=w.feature.pos3 or "",
                      lemma=(w.feature.lemma or "").split("-")[0] if w.feature.lemma not in (None, "*") else base)
             t["keep"] = keep(w, t)
-            k = w.feature.kana
-            t["kana"] = C.hira(k) if k and k != "*" else ""
-            if t["keep"] and C.KANJI.search(w.surface) and C.is_homograph(base):
-                cands = RD.R.cand_list(base, uni, self.extras)
+            kana = w.feature.kana
+            t["kana"] = C.hira(kana) if kana and kana != "*" else ""
+            # same target selection as Disambiguator._tokens (rules, v1 homographs, hybrid variant targets),
+            # with the model only run on tokens that count as words
+            nxt = ws[k + 1].surface if k + 1 < len(ws) else ""
+            rule = C.rule_reading(base, w.surface, nxt, self.version) if C.KANJI.search(w.surface) else None
+            if rule:
+                t.update(reading=rule, changed=C.norm(rule) != C.norm(uni), rule=True)
+            elif t["keep"] and C.KANJI.search(w.surface) and (C.is_target(base, self.version, w.surface, nxt) or
+                                                              self.vm and C.is_variant_target(base, w.surface, nxt)):
+                hy = self.vm is not None and not C.is_homograph(base)  # hybrid: variant targets -> variant model
+                cfg, extras = (self.vm[0], self.vm[1]) if hy else (self.cfg, self.extras)
+                cands = RD.R.cand_list(base, uni, extras)
                 if len(cands) >= 2:
                     todo.append((t, cands, RD.R.pairs((prev, text, start, w.surface, next), base, uni, cands,
-                                                      self.cfg["hint"])))
+                                                      cfg["hint"]), hy))
             toks.append(t)
         return toks
 
