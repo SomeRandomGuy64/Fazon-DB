@@ -15,6 +15,12 @@ stdout, one JSON object per request:
 
 Text preprocessing also follows the AnkiMorphs settings in use: HTML is
 stripped and the contents of [..], （..） and (..) are dropped.
+
+Live mode (for the /mvj-mine bridge's furigana, via mdb serve's /api/parse):
+    {"live": "text"}  ->  {"toks": [[surface, offset, base, base_reading, surface_reading, changed], ...]}
+  The text is used as given (not cleaned), so offsets match the caller's text.
+  surface_reading is the in-context reading of the written form (飲ん -> のん,
+  来 -> き), or "" when it can't be derived.
 """
 import json, os, re, sys
 
@@ -51,6 +57,23 @@ def keep(w, tok):
     return 1
 
 
+def surface_reading(t):
+    """Reading of the written form, given the model's dictionary-form reading."""
+    if not t["changed"]:
+        return t["kana"]
+    surf, base, new = t["surface"], t["base"], t["reading"]
+    if surf == base:
+        return new
+    # 行っ / 行く + おこなう -> おこなっ: swap the okurigana tail of the base form
+    p = 0
+    while p < min(len(surf), len(base)) and surf[p] == base[p]:
+        p += 1
+    btail, stail = base[p:], surf[p:]
+    if C.KANJI.search(btail) or C.KANJI.search(stail) or not new.endswith(C.hira(btail)):
+        return ""
+    return new[:len(new) - len(btail)] + C.hira(stail)
+
+
 class Worker(RD.Disambiguator):
     """Same as Disambiguator, but also records POS + keep flag per token."""
 
@@ -66,6 +89,8 @@ class Worker(RD.Disambiguator):
                      p2=w.feature.pos2 or "", p3=w.feature.pos3 or "",
                      lemma=(w.feature.lemma or "").split("-")[0] if w.feature.lemma not in (None, "*") else base)
             t["keep"] = keep(w, t)
+            k = w.feature.kana
+            t["kana"] = C.hira(k) if k and k != "*" else ""
             if t["keep"] and C.KANJI.search(w.surface) and C.is_homograph(base):
                 cands = RD.R.cand_list(base, uni, self.extras)
                 if len(cands) >= 2:
@@ -85,6 +110,14 @@ def main():
         if not raw:
             continue
         req = json.loads(raw)
+        if "live" in req:
+            text = req["live"] or ""
+            toks = w.annotate(text) if text else []
+            out.write(json.dumps({"toks": [
+                [t["surface"], t["offset"], t["base"], C.hira(t["reading"]) if t["reading"] != "?" else "",
+                 surface_reading(t), bool(t["changed"])] for t in toks]}, ensure_ascii=False) + "\n")
+            out.flush()
+            continue
         items = req.get("lines") or []
         texts = [clean(x.get("text", "")) for x in items]
         res = []

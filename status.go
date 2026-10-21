@@ -184,9 +184,10 @@ func printStatus(db *sql.DB) error {
 }
 
 // learnedTargetWords counts the distinct target words (Word field) on notes
-// with a studied card — the real vocabulary number, like count_known_words.py.
+// with a studied card or the i+0-manually tag — the real vocabulary number,
+// like count_known_words.py.
 func learnedTargetWords(db *sql.DB) int {
-	rows, err := db.Query(`SELECT word FROM notes n WHERE word != '' AND EXISTS (SELECT 1 FROM cards c WHERE c.note_id = n.id AND c.type != 0)`)
+	rows, err := db.Query(`SELECT word FROM notes n WHERE word != '' AND n.id IN (` + studiedNotesSQL + `)`)
 	if err != nil {
 		return 0
 	}

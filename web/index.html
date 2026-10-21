@@ -176,7 +176,7 @@ const tabs = {
     const ip = s.i_plus || {};
     $('#main').innerHTML = `
       <div class="grid">
-        <div class="stat"><div class="v">${fmt(s.learned_target_words)}</div><div class="k">learned words (target words on studied cards)</div></div>
+        <div class="stat"><div class="v">${fmt(s.learned_target_words)}</div><div class="k">learned words (target words on studied or i+0-manually cards)</div></div>
         <div class="stat"><div class="v">${fmt(s.known_words)}</div><div class="k">words not blocking i+1 (of ${fmt(s.words)}; incl. grammar, every word on studied sentences) · ${fmt(s.ignored_words)} ignored</div></div>
         <div class="stat"><div class="v">${(s.token_coverage_pct || 0).toFixed(1)}%</div><div class="k">of all words in your cards are known</div></div>
         <div class="stat"><div class="v">${fmt(ip['i+1'])}</div><div class="k">i+1 cards</div></div>

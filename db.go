@@ -25,7 +25,7 @@ var (
 	}
 	parserDir   = envOr("MDB_PARSER_DIR", filepath.Join(os.Getenv("HOME"), "Language Learning", "jev_parser_test"))
 	modelDir    = filepath.Join(parserDir, "models", "best")
-	workerPy    = filepath.Join(projectDir, "parser", "parse_worker.py")
+	workerPy    = envOr("MDB_WORKER", filepath.Join(projectDir, "parser", "parse_worker.py"))
 	mvjNotetype = "🇯🇵 MvJ"
 )
 

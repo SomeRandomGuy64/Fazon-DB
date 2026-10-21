@@ -23,3 +23,13 @@ Anki itself for everything except reviews. Parser = Faizan's reading model
 ## Waiting on the user
 - `mdb anki-prune -apply`: remove the ~1.02M Database:: notes from Anki (dry run first)
 - After that: retire AnkiMorphs + the *_daily add-ons in Anki (the DB does their job now)
+
+## 2026-10-20: live parsing for /mvj-mine
+- `mdb serve` now also serves the bridge add-on: `POST /api/parse {"text"}` (live parse with the
+  shared warm worker, in-context surface readings + offsets) and `GET /api/word-reading?nid=&word=`
+  (the reading the database parse gave a word in a note). CLI: `mdb parse-text`, `mdb word-reading`.
+- parse_worker.py gained a `{"live": text}` request; bulk output unchanged. Because the worker file
+  is part of the model fingerprint, the stored fingerprint was migrated bca8faf1ba03 → d4e150dbf256
+  (all 1,087,341 notes, no reparse). Do the same for any future worker edit that doesn't change
+  tokens. `MDB_WORKER` env var overrides the worker path (testing a staged copy).
+- Backups: mdb.bak-2026-10-20, parser/parse_worker.py.bak-2026-10-20. Not committed yet.

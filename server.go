@@ -26,6 +26,7 @@ func serve(db *sql.DB, addr string) error {
 	mux := http.NewServeMux()
 	sub, _ := fs.Sub(webFS, "web")
 	mux.Handle("/", http.FileServer(http.FS(sub)))
+	registerLiveRoutes(mux, db)
 
 	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, getStatus(db))

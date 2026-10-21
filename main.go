@@ -7,6 +7,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -48,6 +49,8 @@ Mining (/mvj-mine)
   mdb alternates TAG         JSON: this card + later alternates of the word
   mdb prepare NID [WORD]     ensure note is in Anki with Word filled; prints the Anki nid
   mdb mined NID TAG [WORD]   record a mined card
+  mdb word-reading NID WORD  the reading the database parse gave WORD in note NID
+  mdb parse-text TEXT        live parse (JSON tokens with in-context readings), as /api/parse
 `
 
 func main() {
@@ -200,6 +203,29 @@ func run(db *sql.DB, cmd string, args []string) error {
 			word = rest[2]
 		}
 		return recordMined(db, nid, rest[1], word)
+	case "word-reading":
+		if len(rest) < 2 {
+			return fmt.Errorf("usage: mdb word-reading NID WORD")
+		}
+		nid, _ := strconv.ParseInt(rest[0], 10, 64)
+		rd, err := wordReading(db, nid, rest[1])
+		if err != nil {
+			return err
+		}
+		fmt.Println(rd)
+		return nil
+	case "parse-text":
+		if len(rest) < 1 {
+			return fmt.Errorf("usage: mdb parse-text TEXT")
+		}
+		toks, err := liveParse(strings.Join(rest, " "))
+		if err != nil {
+			return err
+		}
+		resetSharedWorker()
+		b, _ := json.Marshal(toks)
+		fmt.Println(string(b))
+		return nil
 	default:
 		fmt.Print(usage)
 		return fmt.Errorf("unknown command")
