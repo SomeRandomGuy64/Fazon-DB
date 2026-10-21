@@ -1,4 +1,4 @@
-# mining-db — build progress (resume here if a session is cut off)
+# Fazon-DB — build progress (resume here if a session is cut off)
 
 Request (2026-10-19): local SQLite mining DB (Go) that replaces AnkiMorphs and, long-term,
 Anki itself for everything except reviews. Parser = Faizan's reading model
@@ -16,8 +16,8 @@ Anki itself for everything except reviews. Parser = Faizan's reading model
 - Direct .apkg import (tested on a scratch copy: 1,002 cards + 2,004 media in 31 s)
 - /mvj-mine: precheck-db → `mdb prepare` (fills Word in Anki, or creates the card straight in
   Study Deck when the note only lives in the DB) → bridge `mine 'NID:TAG'` → `mdb mined`
-- Harness http://127.0.0.1:8790 (systemd user service `mining-db`, live sync every minute)
-- Daily backup to root@89.167.79.200:/var/backups/mining-db (151 MB, restore verified)
+- Harness http://127.0.0.1:8790 (systemd user service `fazon-db`, live sync every minute)
+- Daily backup to root@89.167.79.200:/var/backups/fazon-db (151 MB, restore verified)
 - Portable export (notes.jsonl + known_words.csv) + import-known for any future SRS
 
 ## Waiting on the user

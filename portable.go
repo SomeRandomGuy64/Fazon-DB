@@ -19,7 +19,7 @@ import (
 
 // cmdExport writes DIR/{notes.jsonl, known_words.csv, decks.csv, README.txt}.
 // Media is not copied (it's ~170 GB); notes reference file names in
-// mining-db/media.
+// Fazon-DB/media.
 func cmdExport(db *sql.DB, dir, query string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -86,11 +86,11 @@ func cmdExport(db *sql.DB, dir, query string) error {
 	krows.Close()
 	cw.Flush()
 	kf.Close()
-	os.WriteFile(filepath.Join(dir, "README.txt"), []byte(fmt.Sprintf(`mining-db export %s
+	os.WriteFile(filepath.Join(dir, "README.txt"), []byte(fmt.Sprintf(`Fazon-DB export %s
 notes.jsonl      one card per line: sentence, translation, word, definition, media file names,
                  context (episode summary + neighbouring lines), tokens [surface, word id], i+N
 known_words.csv  every known word (dictionary form, reading, lemma, source, frequency rank)
-Media files live in mining-db/media/ under the names given in "media".
+Media files live in Fazon-DB/media/ under the names given in "media".
 `, time.Now().Format(time.RFC3339))), 0o644)
 	log.Printf("export → %s: %d notes, %d known words", dir, n, k)
 	return nil
@@ -152,7 +152,7 @@ func cmdImportKnown(db *sql.DB, path string) error {
 }
 
 // cmdAnkiPrune deletes subs2srs pool notes from Anki once the database fully
-// holds them: parsed, every media file present in mining-db/media, and never
+// holds them: parsed, every media file present in Fazon-DB/media, and never
 // studied. Dry run unless apply.
 func cmdAnkiPrune(db *sql.DB, deckGlob string, apply bool) error {
 	q := `SELECT n.id, COALESCE(n.sentence_audio,''), COALESCE(n.image,'') FROM notes n JOIN decks d ON d.id=n.deck_id
@@ -192,7 +192,7 @@ func cmdAnkiPrune(db *sql.DB, deckGlob string, apply bool) error {
 		}
 	}
 	rows.Close()
-	log.Printf("anki-prune: %d pool notes can leave Anki; %d kept because their media is not in mining-db/media yet (run media-adopt)", len(ok), noMedia)
+	log.Printf("anki-prune: %d pool notes can leave Anki; %d kept because their media is not in Fazon-DB/media yet (run media-adopt)", len(ok), noMedia)
 	if !apply {
 		log.Printf("dry run — nothing deleted. Re-run with -apply to delete them from Anki.")
 		return nil
@@ -210,6 +210,6 @@ func cmdAnkiPrune(db *sql.DB, deckGlob string, apply bool) error {
 		}
 		return nil
 	})
-	log.Printf("anki-prune: removed %d notes from Anki (kept in mining-db)", done)
+	log.Printf("anki-prune: removed %d notes from Anki (kept in Fazon-DB)", done)
 	return err
 }

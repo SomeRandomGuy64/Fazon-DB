@@ -1,4 +1,4 @@
-"""JSONL tokenizer worker for mining-db: Faizan's reading-disambiguation model.
+"""JSONL tokenizer worker for Fazon-DB: Faizan's reading-disambiguation model.
 
 UniDic (fugashi) splits the text; the ModernBERT cross-encoder in
 jev_parser_test/models/best picks the reading of every homograph token.

@@ -1,4 +1,4 @@
-# mining-db
+# Fazon-DB
 
 A local sentence-mining database that replaces AnkiMorphs. It holds every subs2srs
 (`Database::*`) card and every mined MvJ card, with all fields and the MvJ context. Each card
@@ -16,7 +16,7 @@ tag sets are kept up to date incrementally, so there is never a full recalc.
 
 | Piece | Where |
 |---|---|
-| Schema | `db.go`. One SQLite file, `data/mining.db` |
+| Schema | `db.go`. One SQLite file, `data/fazon.db` |
 | Import from Anki | `importer.go`. Reads the collection read-only. Brings in notes, cards, tags (minus the derived ones), the MvJ context store (summary stored once per video), the AnkiMorphs known-lemma snapshot and the known-morphs files |
 | Parser | `parser/parse_worker.py`. JSONL worker around `reading_disambig`. Filters match your AnkiMorphs settings: punctuation, numerals, proper nouns, out-of-dictionary tokens, bracket contents |
 | Known words | `engine.go`. A word is known if marked known here, or it's on a studied card or an `i+0-manually` card, or its dictionary form/lemma is AnkiMorphs-known |
@@ -25,13 +25,13 @@ tag sets are kept up to date incrementally, so there is never a full recalc.
 | Tag sets | `tagsets.go`. Go port of the `*_daily` add-ons' engine, imported from the add-on folders. Recomputed after every change (~9 s), not once a day |
 | Live sync | `sync.go`. AnkiConnect polling (reviews, edits, new decks), then the incremental recalc |
 | Harness | `server.go` + `web/index.html`. Overview, cards, words (mark known/unknown), tag sets, card detail with per-token readings + romaji, audio/images from collection.media / database.media |
-| Backup | `backup.go`. `VACUUM INTO` snapshot, zstd, scp to `root@89.167.79.200:/var/backups/mining-db`. Keeps 14 there and 3 locally |
+| Backup | `backup.go`. `VACUUM INTO` snapshot, zstd, scp to `root@89.167.79.200:/var/backups/fazon-db`. Keeps 14 there and 3 locally |
 | Mining | `mine.go`. `alternates` / `prepare` / `mined` for the `/mvj-mine` skill |
 
 ## Long-term: the database first, Anki only for reviews
 
 - New subs2srs deck: `./mdb import-apkg path/to/deck.apkg`. It never touches Anki. Media goes
-  into `mining-db/media/`, the cards are tokenized right away and join the tag-set pools.
+  into `Fazon-DB/media/`, the cards are tokenized right away and join the tag-set pools.
 - Mining (`/mvj-mine`): `mdb prepare` creates the card straight in Study Deck when its note only
   lives in the database. Known words are saved in the `learned` table for good.
 - `./mdb anki-prune` (dry run) / `-apply` removes pool notes from Anki once the database fully
@@ -51,11 +51,11 @@ tag sets are kept up to date incrementally, so there is never a full recalc.
 - **New or changed word list in a `*_daily` add-on folder?** `./mdb import-tagsets`
 - **Retire a tag set:** `./mdb drop-tagset '!prefix'`. Re-imports skip it.
 - **Mark a word:** `./mdb known 分かる`, `./mdb unknown 方 かた`, `./mdb forget …`. Or use the Words tab.
-- **Restore a backup:** `scp root@89.167.79.200:/var/backups/mining-db/<file>.db.zst . && zstd -d <file>.db.zst`,
-  then put it at `data/mining.db` with `mdb serve` stopped.
+- **Restore a backup:** `scp root@89.167.79.200:/var/backups/fazon-db/<file>.db.zst . && zstd -d <file>.db.zst`,
+  then put it at `data/fazon.db` with `mdb serve` stopped.
 
 ## Service
 
 ```
-cp mining-db.service ~/.config/systemd/user/ && systemctl --user enable --now mining-db
+cp fazon-db.service ~/.config/systemd/user/ && systemctl --user enable --now fazon-db
 ```

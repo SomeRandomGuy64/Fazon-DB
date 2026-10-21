@@ -57,7 +57,7 @@ func wordReading(db *sql.DB, nid int64, word string) (string, error) {
 	var unk sql.NullInt64
 	err := db.QueryRow(`SELECT COALESCE(tokens,'[]'), unk_morph FROM notes WHERE id=?`, nid).Scan(&tj, &unk)
 	if err == sql.ErrNoRows {
-		return "", fmt.Errorf("note %d not in mining-db", nid)
+		return "", fmt.Errorf("note %d not in Fazon-DB", nid)
 	}
 	if err != nil {
 		return "", err

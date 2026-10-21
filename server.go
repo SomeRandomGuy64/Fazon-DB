@@ -107,7 +107,7 @@ func serve(db *sql.DB, addr string) error {
 		w.Header().Set("Cache-Control", "max-age=86400")
 		http.ServeFile(w, r, p)
 	})
-	log.Printf("mining-db harness on http://%s", addr)
+	log.Printf("Fazon-DB harness on http://%s", addr)
 	return http.ListenAndServe(addr, mux)
 }
 

@@ -18,7 +18,7 @@ import (
 
 var (
 	backupHost   = envOr("MDB_BACKUP_HOST", "root@89.167.79.200")
-	backupRemote = envOr("MDB_BACKUP_DIR", "/var/backups/mining-db")
+	backupRemote = envOr("MDB_BACKUP_DIR", "/var/backups/fazon-db")
 	keepRemote   = 14
 	keepLocal    = 3
 )
@@ -27,7 +27,7 @@ func cmdBackup(db *sql.DB) error {
 	dir := filepath.Join(filepath.Dir(dbPath), "backups")
 	os.MkdirAll(dir, 0o755)
 	stamp := time.Now().Format("2006-01-02_150405")
-	snap := filepath.Join(dir, "mining-"+stamp+".db")
+	snap := filepath.Join(dir, "fazon-"+stamp+".db")
 	t0 := time.Now()
 	if _, err := db.Exec(`VACUUM INTO ?`, snap); err != nil {
 		return fmt.Errorf("snapshot: %w", err)
@@ -46,7 +46,7 @@ func cmdBackup(db *sql.DB) error {
 	if out, err := exec.Command("scp", append(ssh, "-q", zst, backupHost+":"+backupRemote+"/")...).CombinedOutput(); err != nil {
 		return fmt.Errorf("scp: %v %s", err, out)
 	}
-	prune := fmt.Sprintf(`cd %s && ls -1t mining-*.db.zst | tail -n +%d | xargs -r rm -f; ls -1 mining-*.db.zst | wc -l; df -h . | tail -1`, backupRemote, keepRemote+1)
+	prune := fmt.Sprintf(`cd %s && ls -1t fazon-*.db.zst | tail -n +%d | xargs -r rm -f; ls -1 fazon-*.db.zst | wc -l; df -h . | tail -1`, backupRemote, keepRemote+1)
 	out, err := exec.Command("ssh", append(ssh, backupHost, prune)...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("remote prune: %v %s", err, out)
@@ -54,7 +54,7 @@ func cmdBackup(db *sql.DB) error {
 	log.Printf("uploaded to %s:%s (remote: %s)", backupHost, backupRemote, strings.Join(strings.Fields(string(out)), " "))
 
 	// local retention
-	files, _ := filepath.Glob(filepath.Join(dir, "mining-*.db.zst"))
+	files, _ := filepath.Glob(filepath.Join(dir, "fazon-*.db.zst"))
 	sort.Strings(files)
 	for len(files) > keepLocal {
 		os.Remove(files[0])

@@ -1,4 +1,4 @@
-// mdb — mining-db: Faizan's local sentence-mining database.
+// mdb — Fazon-DB: Faizan's local sentence-mining database.
 //
 // SQLite store of every subs2srs (Database::*) and mined MvJ card, tokenized
 // with his reading-disambiguation model, with known words, i+N, a frequency
@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const usage = `mdb — mining-db
+const usage = `mdb — Fazon-DB
 
 Setup / rebuild
   mdb import                 pull notes, cards, tags, context, AnkiMorphs known lemmas, tag sets from Anki
@@ -40,7 +40,7 @@ Day to day
 Long-term (database first, Anki only for reviews)
   mdb import-apkg FILE.apkg [-deck NAME]   add a subs2srs deck straight to the database
   mdb import-apkg A.apkg B.apkg=Deck::Name …   batch: import all, then one parse + recalc
-  mdb media-adopt            hard-link every pool clip/screenshot into mining-db/media
+  mdb media-adopt            hard-link every pool clip/screenshot into Fazon-DB/media
   mdb export DIR [QUERY]     portable dump (notes.jsonl + known_words.csv) for any SRS
   mdb import-known FILE      mark words known from any app's export (word[,reading] per line)
   mdb anki-prune [-deck G] [-apply]   remove pool notes from Anki that the database fully holds

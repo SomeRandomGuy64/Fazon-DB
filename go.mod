@@ -1,4 +1,4 @@
-module miningdb
+module fazondb
 
 go 1.27.2
 

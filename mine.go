@@ -123,7 +123,7 @@ func prepareMine(db *sql.DB, nid int64, word string) (int64, error) {
 	   FROM notes n LEFT JOIN summaries s ON s.id=n.ctx_summary_id WHERE n.id=?`, nid).
 		Scan(&inAnki, &sentence, &sAudio, &image, &notes, &wordF, &summary, &lines)
 	if err != nil {
-		return 0, fmt.Errorf("note %d not in mining-db: %w", nid, err)
+		return 0, fmt.Errorf("note %d not in Fazon-DB: %w", nid, err)
 	}
 	if word == "" {
 		word = wordF
@@ -148,7 +148,7 @@ func prepareMine(db *sql.DB, nid int64, word string) (int64, error) {
 	for _, name := range noteMedia(sAudio, image) {
 		src := mediaPath(name)
 		if src == "" {
-			return 0, fmt.Errorf("media %s not found in mining-db/media, collection.media or database.media", name)
+			return 0, fmt.Errorf("media %s not found in Fazon-DB/media, collection.media or database.media", name)
 		}
 		if err := ac("storeMediaFile", map[string]any{"filename": name, "path": src}, nil); err != nil {
 			return 0, err
@@ -171,7 +171,7 @@ func prepareMine(db *sql.DB, nid int64, word string) (int64, error) {
 		"deckName": studyDeck, "modelName": mvjNotetype,
 		"fields": map[string]string{"Sentence": sentence, "Sentence Audio": sAudio, "Word": word, "Image": image,
 			"Notes": notes, "Context": ctx},
-		"tags":    append(tags, "mining-db"),
+		"tags":    append(tags, "fazon-db"),
 		"options": map[string]any{"allowDuplicate": true},
 	}}, &newID)
 	if err != nil {

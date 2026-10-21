@@ -2,3 +2,4 @@ data/
 media/
 mdb
 mdb.new
+*.bak-*

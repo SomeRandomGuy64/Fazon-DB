@@ -11,11 +11,11 @@ import (
 
 // Paths. Everything lives next to the binary's project folder unless overridden.
 var (
-	projectDir  = envOr("MDB_DIR", filepath.Join(os.Getenv("HOME"), "Language Learning", "mining-db"))
-	dbPath      = envOr("MDB_DB", filepath.Join(projectDir, "data", "mining.db"))
+	projectDir  = envOr("MDB_DIR", filepath.Join(os.Getenv("HOME"), "Language Learning", "Repos", "Fazon-DB"))
+	dbPath      = envOr("MDB_DB", filepath.Join(projectDir, "data", "fazon.db"))
 	ankiProfile = envOr("MDB_ANKI_PROFILE", filepath.Join(os.Getenv("HOME"), ".local/share/Anki2/User 1"))
 	addonsDir   = filepath.Join(filepath.Dir(ankiProfile), "addons21")
-	// mining-db's own media store (hard links into the Anki folders, so no
+	// Fazon-DB's own media store (hard links into the Anki folders, so no
 	// extra disk) comes first; the Anki folders are fallbacks
 	mediaStore = envOr("MDB_MEDIA", filepath.Join(projectDir, "media"))
 	mediaDirs  = []string{

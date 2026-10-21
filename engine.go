@@ -11,7 +11,7 @@ package main
 //
 // A word (morph) is known when any of these hold, mirroring the AnkiMorphs
 // settings in use (lemma evaluation, known interval 1):
-//   manual   - marked known in mining-db (an explicit "unknown" mark wins too)
+//   manual   - marked known in Fazon-DB (an explicit "unknown" mark wins too)
 //   review   - it occurs on a note that has a studied (non-new) card, or a
 //              note tagged _card-status::i+0-manually
 //   ankimorphs / file - its dictionary form (or UniDic lemma) is an AnkiMorphs-known lemma, or
