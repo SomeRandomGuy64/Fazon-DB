@@ -21,8 +21,8 @@ const usage = `mdb — Fazon-DB
 
 Setup / rebuild
   mdb import                 pull notes, cards, tags, context, AnkiMorphs known lemmas, tag sets from Anki
-  mdb parse [-j 3]           tokenize notes whose text or parser model changed (resumable)
-  mdb reparse [-j 3]         re-tokenize everything (after improving the model)
+  mdb parse [-j 2]           tokenize notes whose text or parser model changed (resumable)
+  mdb reparse [-j 2]         re-tokenize everything (after improving the model)
   mdb recalc                 full rebuild of priority list, known words, i+N, tag sets
   mdb import-tagsets         re-read the *_daily add-on configs + targets.csv
   mdb drop-tagset PREFIX     remove a tag set for good (re-imports skip it)
@@ -72,7 +72,7 @@ func main() {
 
 func run(db *sql.DB, cmd string, args []string) error {
 	fs := flag.NewFlagSet(cmd, flag.ExitOnError)
-	jobs := fs.Int("j", 3, "parser workers")
+	jobs := fs.Int("j", 2, "parser workers")
 	addr := fs.String("addr", "127.0.0.1:8790", "listen address")
 	full := fs.Bool("full", false, "full sync")
 	days := fs.Int("days", 1, "sync window in days")

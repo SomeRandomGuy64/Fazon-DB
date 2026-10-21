@@ -44,7 +44,7 @@ tag sets are kept up to date incrementally, so there is never a full recalc.
 
 - **Improved the model?** Replace `jev_parser_test/models/best`, then run `./mdb parse` (or
   `./mdb reparse` to force it). The model fingerprint changes, so every card is re-tokenized
-  (~11 min on the GPU with 3 workers). Known status is re-derived. Only manual marks are keyed
+  (~14 min on the GPU with 2 workers; each holds the main + variant model, ~3 GB, so 3 don't fit in 12 GB). Known status is re-derived. Only manual marks are keyed
   by reading.
 - **New subs2srs deck imported in Anki?** Nothing to do while `mdb serve` runs: the sync picks it
   up and parses it. Otherwise run `./mdb sync`.
