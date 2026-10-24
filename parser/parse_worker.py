@@ -97,7 +97,7 @@ class Worker(RD.Disambiguator):
             # same target selection as Disambiguator._tokens (rules, v1 homographs, hybrid variant targets),
             # with the model only run on tokens that count as words
             nxt = ws[k + 1].surface if k + 1 < len(ws) else ""
-            rule = C.rule_reading(base, w.surface, nxt, self.version) if C.KANJI.search(w.surface) else None
+            rule = C.rule_reading(base, w.surface, nxt, self.version, w.feature.pos1) if C.KANJI.search(w.surface) else None
             if rule:
                 t.update(reading=rule, changed=C.norm(rule) != C.norm(uni), rule=True)
             elif t["keep"] and C.KANJI.search(w.surface) and (C.is_target(base, self.version, w.surface, nxt) or
