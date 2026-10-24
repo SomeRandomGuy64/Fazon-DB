@@ -40,6 +40,23 @@ func serve(db *sql.DB, addr string) error {
 		}
 		writeJSON(w, rs)
 	})
+	mux.HandleFunc("/api/decks", func(w http.ResponseWriter, r *http.Request) {
+		ds, err := listDecks(db, r.URL.Query().Get("q"))
+		if err != nil {
+			httpErr(w, err)
+			return
+		}
+		writeJSON(w, ds)
+	})
+	mux.HandleFunc("/api/deck", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		rs, err := deckCards(db, q.Get("name"), q.Get("q"), intParam(r, "limit", 50), intParam(r, "offset", 0))
+		if err != nil {
+			httpErr(w, err)
+			return
+		}
+		writeJSON(w, rs)
+	})
 	mux.HandleFunc("/api/note/", func(w http.ResponseWriter, r *http.Request) {
 		id, _ := strconv.ParseInt(strings.TrimPrefix(r.URL.Path, "/api/note/"), 10, 64)
 		n, err := noteDetail(db, id)
