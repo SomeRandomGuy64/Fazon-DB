@@ -94,6 +94,7 @@ mark { background: var(--hl); color: var(--unknown); border-radius: 3px; padding
   <nav>
     <button data-tab="overview" class="on">Overview</button>
     <button data-tab="search">Cards</button>
+    <button data-tab="decks">Decks</button>
     <button data-tab="words">Words</button>
     <button data-tab="tagsets">Tag sets</button>
   </nav>
@@ -225,6 +226,26 @@ const tabs = {
     run();
   },
 
+  async decks() {
+    if (state.deck) return deckView();
+    $('#main').innerHTML = `
+      <div class="row"><input type="search" id="dq" placeholder="Filter decks by name, e.g.  oriki   ·   trial   ·   tcg" value="${esc(state.dq)}"></div>
+      <div class="tscroll"><table id="dt"></table></div>`;
+    const run = async () => {
+      state.dq = $('#dq').value;
+      const ds = await api('/api/decks?q=' + encodeURIComponent(state.dq));
+      $('#dt').innerHTML = `<tr><th>Deck</th><th class="num">Cards</th><th class="num">i+0</th><th class="num">i+1</th><th class="num">i+≥2</th><th class="num">In Anki</th></tr>` +
+        ds.map(d => `<tr class="click" data-deck="${esc(d.name)}"><td><code>${esc(d.name.replace(/^Database::/, ''))}</code></td>
+          <td class="num">${fmt(d.notes)}</td><td class="num">${fmt(d.i0)}</td><td class="num">${fmt(d.i1)}</td>
+          <td class="num">${fmt(d.i2)}</td><td class="num">${fmt(d.in_anki)}</td></tr>`).join('') ||
+        '<tr><td colspan="6" class="empty">No decks match.</td></tr>';
+      $('#dt').querySelectorAll('tr[data-deck]').forEach(tr => tr.onclick = () => { state.deck = tr.dataset.deck; state.doff = 0; show('decks'); });
+    };
+    $('#dq').onkeydown = e => { if (e.key === 'Enter') run(); };
+    $('#dq').oninput = () => { clearTimeout(state._dqt); state._dqt = setTimeout(run, 250); };
+    run();
+  },
+
   async words() {
     $('#main').innerHTML = `
       <div class="row"><input type="search" id="wq" placeholder="Filter words (dictionary form or reading)" value="${esc(state.wq)}">
@@ -277,6 +298,29 @@ const tabs = {
   },
 };
 
+// one deck's cards in video order (Decks tab → click a deck)
+async function deckView() {
+  $('#main').innerHTML = `
+    <div class="row"><button class="btn" id="dback">← All decks</button><h2 style="margin:0"><code>${esc(state.deck.replace(/^Database::/, ''))}</code></h2>
+      <select id="di"><option value="">All cards</option><option value="i:0">i+0</option><option value="i:1">i+1</option><option value="i:2+">i+≥2</option></select></div>
+    <div class="cards" id="dres"></div><div class="pager" id="dpg"></div>`;
+  $('#di').value = state.di;
+  const run = async () => {
+    state.di = $('#di').value;
+    $('#dres').innerHTML = '<div class="empty">Loading…</div>';
+    const rs = await api(`/api/deck?limit=50&offset=${state.doff}&q=${encodeURIComponent(state.di)}&name=` + encodeURIComponent(state.deck));
+    $('#dres').innerHTML = rs.map(r => cardHTML(r)).join('') || '<div class="empty">No cards.</div>';
+    wireCards($('#dres'));
+    $('#dpg').innerHTML = (state.doff ? '<button class="btn" id="dprev">← Prev</button>' : '') +
+      `<span class="romaji">cards ${fmt(state.doff + 1)}–${fmt(state.doff + rs.length)}</span>` + (rs.length === 50 ? '<button class="btn" id="dnext">Next →</button>' : '');
+    if ($('#dprev')) $('#dprev').onclick = () => { state.doff = Math.max(0, state.doff - 50); save(); run(); };
+    if ($('#dnext')) $('#dnext').onclick = () => { state.doff += 50; save(); run(); };
+  };
+  $('#dback').onclick = () => { state.deck = ''; show('decks'); };
+  $('#di').onchange = () => { state.doff = 0; save(); run(); };
+  run();
+}
+
 async function openNote(nid) {
   const n = await api('/api/note/' + nid);
   const f = n.fields, audio = (f['Sentence Audio'].match(/\[(?:audio|sound):([^\]]+)\]/) || [])[1], img = (f.Image.match(/src="([^"]+)"/) || [])[1];
@@ -317,11 +361,12 @@ async function openNote(nid) {
   });
 }
 
-const state = { q: 'i:1 pool:1', off: 0, wq: '', wk: '0', woff: 0, tsPrefix: '', toff: 0, tab: 'overview' };
+const state = { q: 'i:1 pool:1', off: 0, wq: '', wk: '0', woff: 0, tsPrefix: '', toff: 0, dq: '', deck: '', doff: 0, di: '', tab: 'overview' };
 try { Object.assign(state, JSON.parse(localStorage.getItem('mdb-state') || '{}')); } catch {}
+function save() { try { const { _dqt, ...s } = state; localStorage.setItem('mdb-state', JSON.stringify(s)); } catch {} }
 function show(tab) {
   state.tab = tab;
-  try { localStorage.setItem('mdb-state', JSON.stringify(state)); } catch {}
+  save();
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
   tabs[tab]().catch(e => $('#main').innerHTML = `<div class="empty">${esc(e.message)}</div>`);
 }

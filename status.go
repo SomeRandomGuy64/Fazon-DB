@@ -28,11 +28,27 @@ func search(db *sql.DB, q string, limit, offset int) ([]searchRow, error) {
 	if err != nil {
 		return nil, err
 	}
+	return runSearch(db, where, args, "(mu.rank IS NULL), mu.rank, n.id", limit, offset)
+}
+
+// deckCards lists one deck's cards (subdecks included) in video order: subs2srs imports assign
+// note ids in timeline order. q narrows it with the usual search terms (e.g. "i:1").
+func deckCards(db *sql.DB, deck, q string, limit, offset int) ([]searchRow, error) {
+	where, args, err := buildWhere(db, q)
+	if err != nil {
+		return nil, err
+	}
+	where = "(" + where + ") AND n.deck_id IN (SELECT id FROM decks WHERE name = ? OR name LIKE ?)"
+	args = append(args, deck, deck+"::%")
+	return runSearch(db, where, args, "n.id", limit, offset)
+}
+
+func runSearch(db *sql.DB, where string, args []any, order string, limit, offset int) ([]searchRow, error) {
 	args = append(args, limit, offset)
 	rows, err := db.Query(`SELECT n.id, COALESCE(d.name,''), COALESCE(n.sentence,''), COALESCE(n.notes,''), n.n_unknown, mu.rank,
 	   n.in_anki, COALESCE(n.sentence_audio,''), COALESCE(n.image,'')
 	   FROM notes n LEFT JOIN decks d ON d.id = n.deck_id LEFT JOIN morphs mu ON mu.id = n.unk_morph
-	   WHERE `+where+` ORDER BY (mu.rank IS NULL), mu.rank, n.id LIMIT ? OFFSET ?`, args...)
+	   WHERE `+where+` ORDER BY `+order+` LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -175,6 +191,32 @@ func getStatus(db *sql.DB) statusInfo {
 	}
 	s.LastImport, s.LastSync, s.LastBackup = getMeta(db, "last_import"), getMeta(db, "last_sync"), getMeta(db, "last_backup")
 	return s
+}
+
+type deckInfo struct {
+	Name   string `json:"name"`
+	Notes  int    `json:"notes"`
+	I0     int    `json:"i0"`
+	I1     int    `json:"i1"`
+	I2     int    `json:"i2"`
+	InAnki int    `json:"in_anki"`
+}
+
+// listDecks: every deck holding notes, with its i+N split; q filters by name substring.
+func listDecks(db *sql.DB, q string) ([]deckInfo, error) {
+	rows, err := db.Query(`SELECT d.name, COUNT(*), SUM(n.n_unknown = 0), SUM(n.n_unknown = 1), SUM(n.n_unknown >= 2), SUM(n.in_anki)
+	   FROM notes n JOIN decks d ON d.id = n.deck_id WHERE d.name LIKE ? GROUP BY d.id ORDER BY d.name`, "%"+q+"%")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []deckInfo{}
+	for rows.Next() {
+		var d deckInfo
+		rows.Scan(&d.Name, &d.Notes, &d.I0, &d.I1, &d.I2, &d.InAnki)
+		out = append(out, d)
+	}
+	return out, nil
 }
 
 func printStatus(db *sql.DB) error {
