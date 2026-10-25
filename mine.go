@@ -150,8 +150,18 @@ func prepareMine(db *sql.DB, nid int64, word string) (int64, error) {
 		if src == "" {
 			return 0, fmt.Errorf("media %s not found in Fazon-DB/media, collection.media or database.media", name)
 		}
-		if err := ac("storeMediaFile", map[string]any{"filename": name, "path": src}, nil); err != nil {
+		// The pool row and Fazon-DB/media keep the long name; only the Anki
+		// copy (and the Study Deck note's refs) get the sync-safe one.
+		short, err := syncSafeName(name)
+		if err != nil {
 			return 0, err
+		}
+		var stored string
+		if err := ac("storeMediaFile", map[string]any{"filename": short, "path": src}, &stored); err != nil {
+			return 0, err
+		}
+		if stored != "" && stored != name {
+			sAudio, image = renameMediaRefs(sAudio, name, stored), renameMediaRefs(image, name, stored)
 		}
 	}
 	ctx := ""
