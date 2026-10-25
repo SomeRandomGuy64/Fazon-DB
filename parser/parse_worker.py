@@ -24,7 +24,7 @@ Live mode (for the /mvj-mine bridge's furigana, via mdb serve's /api/parse):
   surface_reading is the in-context reading of the written form (飲ん -> のん,
   来 -> き), or "" when it can't be derived.
 """
-import json, os, re, sys
+import json, os, re, sys, unicodedata
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PARSER_DIR = os.path.expanduser("~/Language Learning/jev_parser_test")
@@ -64,7 +64,7 @@ def surface_reading(t):
     if not t["changed"]:
         return t["kana"]
     surf, base, new = t["surface"], t["base"], t["reading"]
-    if surf == base:
+    if unicodedata.normalize("NFKC", surf) == unicodedata.normalize("NFKC", base):  # km vs ｋｍ
         return new
     # 行っ / 行く + おこなう -> おこなっ: swap the okurigana tail of the base form
     p = 0
@@ -82,10 +82,25 @@ class Worker(RD.Disambiguator):
     def _tokens(self, text, prev, next, todo):
         toks, pos = [], 0
         ws = list(C.tagger()(text))
-        for k, w in enumerate(ws):
-            start = text.find(w.surface, pos)
+        before, before_pos = "", ""  # previous token (surface, pos1), for the rules that look back
+        k = 0
+        while k < len(ws):
+            w, mg = ws[k], C.merge_span(ws, k)
+            n = mg[0] if mg else 1
+            surface = "".join(x.surface for x in ws[k:k + n])
+            start = text.find(surface, pos)
             start = pos if start < 0 else start
-            pos = start + len(w.surface)
+            pos = start + len(surface)
+            if mg:
+                # a word UniDic split in two (上|がんねん, ご|ちそう): one token, reading from the merge table
+                _, base, reading, kana, pos1 = mg
+                t = dict(surface=surface, offset=start, base=base, pos=pos1, unidic_reading=reading,
+                         reading=reading, changed=False, confidence=None, candidates=None,
+                         p2="", p3="", lemma=base, keep=1, kana=kana)
+                toks.append(t)
+                before, before_pos = surface, pos1
+                k += n
+                continue
             base, uni = C.base_form(w), C.unidic_reading(w)
             t = dict(surface=w.surface, offset=start, base=base, pos=w.feature.pos1, unidic_reading=uni,
                      reading=uni, changed=False, confidence=None, candidates=None,
@@ -97,7 +112,8 @@ class Worker(RD.Disambiguator):
             # same target selection as Disambiguator._tokens (rules, v1 homographs, hybrid variant targets),
             # with the model only run on tokens that count as words
             nxt = ws[k + 1].surface if k + 1 < len(ws) else ""
-            rule = C.rule_reading(base, w.surface, nxt, self.version, w.feature.pos1) if C.KANJI.search(w.surface) else None
+            rule = (C.rule_reading(base, w.surface, nxt, self.version, w.feature.pos1, before, before_pos)
+                    if C.KANJI.search(w.surface) or base in C.CITATION else None)
             if rule:
                 t.update(reading=rule, changed=C.norm(rule) != C.norm(uni), rule=True)
             elif t["keep"] and C.KANJI.search(w.surface) and (C.is_target(base, self.version, w.surface, nxt) or
@@ -109,6 +125,8 @@ class Worker(RD.Disambiguator):
                     todo.append((t, cands, RD.R.pairs((prev, text, start, w.surface, next), base, uni, cands,
                                                       cfg["hint"]), hy))
             toks.append(t)
+            before, before_pos = w.surface, w.feature.pos1
+            k += 1
         return toks
 
 
