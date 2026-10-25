@@ -5,7 +5,9 @@ package main
 
 import (
 	"archive/zip"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -112,6 +114,67 @@ func unescapeSrc(s string) string {
 		return u
 	}
 	return s
+}
+
+// Anki's media sync (and so AnkiDroid) silently skips names over 120 bytes,
+// and subs2srs names embed whole video titles. syncSafeName shortens a name
+// exactly like the MvJ add-on's _build_sync_safe_media_name, so a clip gets
+// the same short name whichever route copies it into collection.media.
+const mediaNameMaxBytes = 120
+
+var (
+	reSyncIllegal = regexp.MustCompile(`[\x00-\x1f\x7f\[\]<>:"/?*^\\|]`)
+	reMediaTail   = regexp.MustCompile(`^(.*?)(_(?:\d+\.){3}\d+-(?:\d+\.){3}\d+|_\d+-\d+)(\.[^.]+)$`)
+)
+
+func isSyncSafeName(name string) bool {
+	return len(name) <= mediaNameMaxBytes && norm.NFC.IsNormalString(name) && !reSyncIllegal.MatchString(name)
+}
+
+// syncSafeName returns name unchanged if it already syncs, else the title
+// trimmed to fit before "_<sha256[:10]><timestamp tail><ext>".
+func syncSafeName(name string) (string, error) {
+	if isSyncSafeName(name) {
+		return name, nil
+	}
+	var title, tail, ext string
+	if m := reMediaTail.FindStringSubmatch(name); m != nil {
+		title, tail, ext = m[1], m[2], m[3]
+	} else {
+		ext = filepath.Ext(name)
+		title = strings.TrimSuffix(name, ext)
+	}
+	title = strings.TrimSpace(reSyncIllegal.ReplaceAllString(title, "_"))
+	tail = reSyncIllegal.ReplaceAllString(tail, "_")
+	ext = reSyncIllegal.ReplaceAllString(ext, "_")
+	sum := sha256.Sum256([]byte(name))
+	suffix := "_" + hex.EncodeToString(sum[:])[:10] + tail + ext
+	b := []byte(title)
+	if budget := mediaNameMaxBytes - len(suffix); len(b) > budget {
+		b = b[:max(budget, 0)]
+	}
+	short := norm.NFC.String(strings.ToValidUTF8(string(b), "") + suffix)
+	if !isSyncSafeName(short) {
+		return "", fmt.Errorf("could not build a sync-safe media name for %s", name)
+	}
+	return short, nil
+}
+
+// renameMediaRefs points every [sound:old] and <img src="old"> in field at
+// stored instead.
+func renameMediaRefs(field, old, stored string) string {
+	field = reAudioAll.ReplaceAllStringFunc(field, func(s string) string {
+		if m := reAudioAll.FindStringSubmatch(s); m[1] == old {
+			return strings.Replace(s, m[1], stored, 1)
+		}
+		return s
+	})
+	return reImgAll.ReplaceAllStringFunc(field, func(s string) string {
+		if m := reImgAll.FindStringSubmatch(s); unescapeSrc(m[1]) == old {
+			return strings.Replace(s, `"`+m[1]+`"`, `"`+stored+`"`, 1)
+		}
+		return s
+	})
 }
 
 func copyFile(src, dst string) error {
