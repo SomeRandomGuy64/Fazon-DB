@@ -353,7 +353,8 @@ type jlptLevel struct {
 	Total     int `json:"total"`
 	Known     int `json:"known"`
 	Minable   int `json:"minable"` // unknown, not suspended, with at least one i+1 card
-	Unknown   int `json:"unknown"` // unknown, in your cards (minable included)
+	Unknown   int `json:"unknown"` // unknown, in your cards (minable and suspended included)
+	Suspended int `json:"suspended"` // unknown and a suspended Study Deck word (or part): not to mine
 	Ignored   int `json:"ignored"`
 	Absent    int `json:"absent"`
 	Untracked int `json:"untracked"`
@@ -376,7 +377,10 @@ func jlptSummary(db *sql.DB) ([]jlptLevel, error) {
 			l.Known++
 		case "unknown":
 			l.Unknown++
-			if w.IPlus1 > 0 && !w.Suspended {
+			switch {
+			case w.Suspended:
+				l.Suspended++
+			case w.IPlus1 > 0:
 				l.Minable++
 			}
 		case "ignored":
