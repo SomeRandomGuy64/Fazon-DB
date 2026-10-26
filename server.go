@@ -20,6 +20,9 @@ import (
 var webFS embed.FS
 
 func serve(db *sql.DB, addr string) error {
+	if err := syncSuspended(db); err != nil {
+		log.Printf("suspended words: %v", err)
+	}
 	go syncLoop(db, time.Minute)
 	go backupLoop(db)
 
@@ -88,6 +91,48 @@ func serve(db *sql.DB, addr string) error {
 			return
 		}
 		n, err := markWord(db, req.Base, req.Reading, req.How)
+		if err != nil {
+			httpErr(w, err)
+			return
+		}
+		writeJSON(w, map[string]int{"updated": n})
+	})
+	mux.HandleFunc("/api/jlpt", func(w http.ResponseWriter, r *http.Request) {
+		ls, err := jlptSummary(db)
+		if err != nil {
+			httpErr(w, err)
+			return
+		}
+		writeJSON(w, ls)
+	})
+	mux.HandleFunc("/api/jlpt/words", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		ws, err := jlptList(db, intParam(r, "level", 0), q.Get("status"), q.Get("q"), intParam(r, "limit", 100), intParam(r, "offset", 0))
+		if err != nil {
+			httpErr(w, err)
+			return
+		}
+		writeJSON(w, ws)
+	})
+	mux.HandleFunc("/api/suspended", func(w http.ResponseWriter, r *http.Request) {
+		rs, err := listSuspended(db)
+		if err != nil {
+			httpErr(w, err)
+			return
+		}
+		writeJSON(w, map[string]any{"words": rs, "unmatched": unmatchedSuspended(db)})
+	})
+	mux.HandleFunc("/api/suspended/allow", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST", 405)
+			return
+		}
+		var req struct {
+			Base, Reading string
+			Allow         bool
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		n, err := allowWord(db, req.Base, req.Reading, req.Allow)
 		if err != nil {
 			httpErr(w, err)
 			return

@@ -31,6 +31,9 @@ Day to day
   mdb serve [-addr :8790]    web harness + live Anki sync every minute
   mdb sync [-full] [-days 1] one sync pass with Anki (incremental recalc)
   mdb status                 counts, model freshness, last sync/backup
+  mdb jlpt                   known share of each JLPT level's (approximate) vocabulary
+  mdb suspended              suspended Study Deck words: unknown, never learning targets
+  mdb allow BASE [READING]   let a suspended word be a learning target (disallow = undo)
   mdb search QUERY [-n 20]   search notes (see query.go for syntax)
   mdb known BASE [READING]   mark a word known       (unknown / forget likewise)
   mdb ignore BASE [READING]  ignore a word: neither known nor unknown (unignore = never
@@ -123,6 +126,24 @@ func run(db *sql.DB, cmd string, args []string) error {
 		return serve(db, *addr)
 	case "status":
 		return printStatus(db)
+	case "jlpt":
+		return printJLPT(db)
+	case "suspended":
+		return printSuspended(db)
+	case "allow", "disallow":
+		if len(rest) < 1 {
+			return fmt.Errorf("usage: mdb %s BASE [READING]", cmd)
+		}
+		reading := ""
+		if len(rest) > 1 {
+			reading = rest[1]
+		}
+		n, err := allowWord(db, rest[0], reading, cmd == "allow")
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%s: %d word(s) updated\n", cmd, n)
+		return nil
 	case "search":
 		rs, err := search(db, strings.Join(rest, " "), *limit, 0)
 		if err != nil {

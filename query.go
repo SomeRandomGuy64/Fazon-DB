@@ -12,6 +12,7 @@ package main
 //   nid:123,456                note ids
 //   pool:1 / pool:0            subs2srs pool decks or not
 //   anki:0                     notes no longer in Anki
+//   susp:0 / susp:1            without / with a suspended (excluded) unknown word
 //   -term                      negate any term
 //   anything else              substring of the sentence
 
@@ -110,6 +111,11 @@ func buildWhere(db *sql.DB, q string) (string, []any, error) {
 			c = "n.deck_id IN (SELECT id FROM decks WHERE is_pool = " + boolInt(val) + ")"
 		case "anki":
 			c = "n.in_anki = " + boolInt(val)
+		case "susp": // susp:1 = has an unknown word that is suspended and not allowed (susp:0 = none)
+			c = "EXISTS (SELECT 1 FROM note_morphs nm JOIN morphs m ON m.id=nm.morph_id WHERE nm.note_id=n.id AND m.known = 0 AND nm.morph_id IN (" + excludedSQL + "))"
+			if boolInt(val) == "0" {
+				c = "NOT " + c
+			}
 		default:
 			c = "n.sentence LIKE ? ESCAPE '\\'"
 			args = append(args, "%"+likeGlob(val)+"%")
@@ -127,7 +133,7 @@ func buildWhere(db *sql.DB, q string) (string, []any, error) {
 
 func isKey(k string) bool {
 	switch strings.ToLower(k) {
-	case "deck", "tag", "i", "word", "unk", "nid", "pool", "anki":
+	case "deck", "tag", "i", "word", "unk", "nid", "pool", "anki", "susp":
 		return true
 	}
 	return false

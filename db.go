@@ -143,6 +143,15 @@ CREATE INDEX IF NOT EXISTS tagset_assign_tag ON tagset_assign(tag);
 CREATE INDEX IF NOT EXISTS tagset_assign_note ON tagset_assign(note_id);
 CREATE INDEX IF NOT EXISTS tagset_assign_set ON tagset_assign(tagset_id, rank, pos);
 
+-- Suspended Study Deck cards' target words (suspended.go, derived): always unknown, never learning targets
+CREATE TABLE IF NOT EXISTS suspended_words(morph_id INTEGER PRIMARY KEY, note_id INTEGER NOT NULL, word TEXT NOT NULL);
+-- explicit "learn it anyway" for a suspended word
+CREATE TABLE IF NOT EXISTS suspend_marks(base TEXT NOT NULL, reading TEXT NOT NULL, allowed INTEGER NOT NULL, at INTEGER,
+  PRIMARY KEY(base, reading)) WITHOUT ROWID;
+
+-- JLPT list expressions as the parser splits them (jlpt.go): [[base, reading], ...] of the kept tokens
+CREATE TABLE IF NOT EXISTS jlpt_parse(text TEXT PRIMARY KEY, model TEXT NOT NULL, toks TEXT NOT NULL) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS mined(note_id INTEGER NOT NULL, tag TEXT, word TEXT, at INTEGER NOT NULL);
 
 -- pool note -> the study card made from it (when mining created a new note)
