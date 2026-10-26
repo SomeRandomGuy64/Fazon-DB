@@ -94,6 +94,23 @@ func serve(db *sql.DB, addr string) error {
 		}
 		writeJSON(w, map[string]int{"updated": n})
 	})
+	mux.HandleFunc("/api/jlpt", func(w http.ResponseWriter, r *http.Request) {
+		ls, err := jlptSummary(db)
+		if err != nil {
+			httpErr(w, err)
+			return
+		}
+		writeJSON(w, ls)
+	})
+	mux.HandleFunc("/api/jlpt/words", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		ws, err := jlptList(db, intParam(r, "level", 0), q.Get("status"), q.Get("q"), intParam(r, "limit", 100), intParam(r, "offset", 0))
+		if err != nil {
+			httpErr(w, err)
+			return
+		}
+		writeJSON(w, ws)
+	})
 	mux.HandleFunc("/api/tagset", func(w http.ResponseWriter, r *http.Request) {
 		rs, err := tagsetView(db, r.URL.Query().Get("prefix"), intParam(r, "limit", 50), intParam(r, "offset", 0))
 		if err != nil {

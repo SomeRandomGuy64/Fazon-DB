@@ -82,6 +82,15 @@ mark { background: var(--hl); color: var(--unknown); border-radius: 3px; padding
 .tsword { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 10px; padding: 10px 14px; }
 .tsword h3 { margin: 0 0 6px; font-size: 15px; font-family: var(--jp); font-weight: 600; }
 .tsword h3 .r { color: var(--muted); font-weight: 400; font-family: system-ui; font-size: 12px; margin-right: 8px; }
+.jlvl { cursor: pointer; display: flex; flex-direction: column; gap: 6px; }
+.jlvl.on { border-color: var(--accent); }
+.jlvl .v small { font-size: 13px; font-weight: 400; color: var(--muted); }
+.sbar { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: var(--chip); }
+.sbar i { display: block; height: 100%; }
+.sbar .k, .sw.k { background: var(--known); } .sbar .m, .sw.m { background: var(--accent); opacity: .75; }
+.sbar .u, .sw.u { background: var(--muted); opacity: .35; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; vertical-align: -1px; margin-right: 4px; }
+.sw.a { background: var(--chip); border: 1px solid var(--line); }
 .alt { display: grid; grid-template-columns: 34px 52px 1fr; gap: 8px; align-items: center; padding: 4px 0; border-top: 1px dashed var(--line); cursor: pointer; }
 .alt:first-of-type { border-top: 0; }
 .alt .pos { color: var(--muted); font: 11px ui-monospace, monospace; }
@@ -97,6 +106,7 @@ mark { background: var(--hl); color: var(--unknown); border-radius: 3px; padding
     <button data-tab="decks">Decks</button>
     <button data-tab="words">Words</button>
     <button data-tab="tagsets">Tag sets</button>
+    <button data-tab="jlpt">JLPT</button>
   </nav>
   <div id="syncinfo"><span id="synctext"></span><button class="btn" id="syncbtn">Sync now</button></div>
 </header>
@@ -118,7 +128,7 @@ const KANA = {'きゃ':'kya','きゅ':'kyu','きょ':'kyo','しゃ':'sha','し�
 'びゃ':'bya','びゅ':'byu','びょ':'byo','ぴゃ':'pya','ぴゅ':'pyu','ぴょ':'pyo','しぇ':'she','ちぇ':'che','じぇ':'je','てぃ':'ti','でぃ':'di','ふぁ':'fa','ふぃ':'fi','ふぇ':'fe','ふぉ':'fo','うぃ':'wi','うぇ':'we','うぉ':'wo',
 'あ':'a','い':'i','う':'u','え':'e','お':'o','か':'ka','き':'ki','く':'ku','け':'ke','こ':'ko','さ':'sa','し':'shi','す':'su','せ':'se','そ':'so','た':'ta','ち':'chi','つ':'tsu','て':'te','と':'to',
 'な':'na','に':'ni','ぬ':'nu','ね':'ne','の':'no','は':'ha','ひ':'hi','ふ':'fu','へ':'he','ほ':'ho','ま':'ma','み':'mi','む':'mu','め':'me','も':'mo','や':'ya','ゆ':'yu','よ':'yo',
-'ら':'ra','り':'ri','る':'ru','れ':'re','ろ':'ro','わ':'wa','を':'o','ん':'n','が':'ga','ぎ':'gi','ぐ':'gu','げ':'ge','ご':'go','ざ':'za','じ':'ji','ず':'zu','ぜ':'ze','ぞ':'zo',
+'ら':'ra','り':'ri','る':'ru','れ':'re','ろ':'ro','わ':'wa','を':'o','ん':'N','が':'ga','ぎ':'gi','ぐ':'gu','げ':'ge','ご':'go','ざ':'za','じ':'ji','ず':'zu','ぜ':'ze','ぞ':'zo',
 'だ':'da','ぢ':'ji','づ':'zu','で':'de','ど':'do','ば':'ba','び':'bi','ぶ':'bu','べ':'be','ぼ':'bo','ぱ':'pa','ぴ':'pi','ぷ':'pu','ぺ':'pe','ぽ':'po','ゔ':'vu',
 'ぁ':'a','ぃ':'i','ぅ':'u','ぇ':'e','ぉ':'o','ゃ':'ya','ゅ':'yu','ょ':'yo','ゎ':'wa'};
 function romaji(s) {
@@ -130,7 +140,7 @@ function romaji(s) {
     const two = KANA[s.slice(i, i+2)]; if (two) { out += two; i += 2; continue; }
     out += KANA[s[i]] ?? s[i]; i++;
   }
-  return out.replace(/n([aiueoy])/g, "n'$1");
+  return out.replace(/N([aiueoy])/g, "n'$1").replace(/N/g, 'n');
 }
 const hasKana = s => /[ぁ-ゖァ-ヺ]/.test(s || '');
 const wordLabel = (base, reading) => `<span class="jp">${esc(base)}</span>` +
@@ -296,6 +306,58 @@ const tabs = {
     $('#ts').onchange = () => { state.toff = 0; run(); };
     run();
   },
+
+  async jlpt() {
+    const ls = await api('/api/jlpt');
+    const pct = (a, b) => b ? (100 * a / b).toFixed(1) : '0.0';
+    let cum = { known: 0, total: 0 };
+    $('#main').innerHTML = `
+      <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(140px,1fr))">${ls.map(l => {
+        const n = l.total - l.untracked - l.ignored, rest = l.unknown - l.minable;
+        cum.known += l.known; cum.total += n;
+        return `<div class="stat jlvl ${l.level === state.jl ? 'on' : ''}" data-level="${l.level}">
+          <div class="v">N${l.level} <small>${pct(l.known, n)}%</small></div>
+          <div class="sbar" title="${fmt(l.known)} known · ${fmt(l.minable)} with i+1 cards · ${fmt(rest)} other unknown · ${fmt(l.absent)} not in your cards">
+            <i class="k" style="width:${pct(l.known, n)}%"></i><i class="m" style="width:${pct(l.minable, n)}%"></i><i class="u" style="width:${pct(rest, n)}%"></i></div>
+          <div class="k">${fmt(l.known)} / ${fmt(n)} known · ${fmt(n - l.known)} to go</div>
+          <div class="k">N5–N${l.level}: ${pct(cum.known, cum.total)}% (${fmt(cum.known)} / ${fmt(cum.total)})</div></div>`; }).join('')}</div>
+      <p class="romaji"><span class="sw k"></span>known <span class="sw m" style="margin-left:10px"></span>unknown, has i+1 cards
+        <span class="sw u" style="margin-left:10px"></span>unknown, no i+1 card yet <span class="sw a" style="margin-left:10px"></span>not in your cards ·
+        Approximate lists (no official JLPT lists exist since 2010; these are Jonathan Waller's tanos.co.uk lists). Words your parser splits
+        (自転車 = 自転|車) count once every part is known. Numerals aren't counted.</p>
+      <h2 id="jlh"></h2>
+      <div class="row"><input type="search" id="jq" placeholder="Filter (word, reading or English)" value="${esc(state.jlq)}">
+        <select id="js"><option value="minable">To mine (has i+1 cards)</option><option value="unknown">Unknown</option><option value="absent">Not in your cards</option>
+          <option value="known">Known</option><option value="all">All</option></select></div>
+      <div class="tscroll"><table id="jt"></table></div><div class="pager" id="jpg"></div>`;
+    $('#js').value = state.jls;
+    document.querySelectorAll('.jlvl').forEach(c => c.onclick = () => { state.jl = +c.dataset.level; state.jloff = 0; show('jlpt'); });
+    const stat = { known: ['known', 'known'], unknown: ['unknown', 'unknown'], absent: ['romaji', 'not in your cards'], ignored: ['romaji', 'ignored'], untracked: ['romaji', 'numeral'] };
+    const label = w => { const rd = w.reading.replace(/[～〜~]|\s*[(（][^)）]*[)）]/g, '').split(';').map(x => x.trim());
+      return `<span class="jp">${esc(w.expr)}</span>` + (w.reading !== w.expr ? ` <span class="jp">【${esc(w.reading)}】</span>` : '') +
+        (rd.every(x => /^[ぁ-ゖァ-ヺー]+$/.test(x)) ? ` <span class="romaji">${esc(rd.map(romaji).join(' / '))}</span>` : ''); };
+    const run = async () => {
+      state.jlq = $('#jq').value; state.jls = $('#js').value; save();
+      $('#jlh').textContent = `N${state.jl} words` + (state.jls === 'minable' || state.jls === 'unknown' ? ' — most frequent in your cards first' : '');
+      const ws = await api(`/api/jlpt/words?limit=100&offset=${state.jloff}&level=${state.jl}&status=${state.jls}&q=` + encodeURIComponent(state.jlq));
+      $('#jt').innerHTML = `<tr><th class="num">Rank</th><th>Word</th><th>Meaning</th><th>Status</th><th class="num">i+1 cards</th><th></th></tr>` +
+        ws.map(w => `<tr><td class="num">${w.rank ? fmt(w.rank) : ''}</td><td>${label(w)}</td><td class="romaji">${esc(w.meaning)}</td>
+          <td class="${stat[w.status][0]}">${stat[w.status][1]}${w.parts ? `<div class="row" style="margin:4px 0 0;gap:4px">${w.parts.map(p =>
+            `<span class="chip jp ${p.known ? '' : 'unk'}" title="${p.known ? 'known' : 'unknown'}">${esc(p.base)}</span>`).join('<span class="romaji">+</span>')}</div>` : ''}</td>
+          <td class="num">${w.i1_cards ? `<a href="#" data-unk="${esc(w.base)}">${fmt(w.i1_cards)}</a>` : 0}</td>
+          <td>${w.status === 'known' || !w.base ? '' : `<button class="btn" data-b="${esc(w.base)}" data-r="${esc(w.m_reading)}">Mark ${w.parts ? `<span class="jp">${esc(w.base)}</span> ` : ''}known</button>`}</td></tr>`).join('') ||
+        '<tr><td colspan="6" class="empty">No words.</td></tr>';
+      $('#jt').querySelectorAll('[data-b]').forEach(b => b.onclick = async () => {
+        b.disabled = true; await api('/api/word/mark', {method: 'POST', body: JSON.stringify({base: b.dataset.b, reading: b.dataset.r, how: 'known'})}); show('jlpt'); });
+      $('#jt').querySelectorAll('[data-unk]').forEach(a => a.onclick = e => { e.preventDefault(); state.q = 'i:1 unk:' + a.dataset.unk; state.off = 0; show('search'); });
+      $('#jpg').innerHTML = (state.jloff ? '<button class="btn" id="jprev">← Prev</button>' : '') + (ws.length === 100 ? '<button class="btn" id="jnext">Next →</button>' : '');
+      if ($('#jprev')) $('#jprev').onclick = () => { state.jloff = Math.max(0, state.jloff - 100); run(); };
+      if ($('#jnext')) $('#jnext').onclick = () => { state.jloff += 100; run(); };
+    };
+    $('#jq').onkeydown = e => { if (e.key === 'Enter') { state.jloff = 0; run(); } };
+    $('#js').onchange = () => { state.jloff = 0; run(); };
+    run();
+  },
 };
 
 // one deck's cards in video order (Decks tab → click a deck)
@@ -361,7 +423,7 @@ async function openNote(nid) {
   });
 }
 
-const state = { q: 'i:1 pool:1', off: 0, wq: '', wk: '0', woff: 0, tsPrefix: '', toff: 0, dq: '', deck: '', doff: 0, di: '', tab: 'overview' };
+const state = { q: 'i:1 pool:1', off: 0, wq: '', wk: '0', woff: 0, tsPrefix: '', toff: 0, dq: '', deck: '', doff: 0, di: '', jl: 5, jls: 'minable', jlq: '', jloff: 0, tab: 'overview' };
 try { Object.assign(state, JSON.parse(localStorage.getItem('mdb-state') || '{}')); } catch {}
 function save() { try { const { _dqt, ...s } = state; localStorage.setItem('mdb-state', JSON.stringify(s)); } catch {} }
 function show(tab) {

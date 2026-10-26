@@ -31,6 +31,7 @@ Day to day
   mdb serve [-addr :8790]    web harness + live Anki sync every minute
   mdb sync [-full] [-days 1] one sync pass with Anki (incremental recalc)
   mdb status                 counts, model freshness, last sync/backup
+  mdb jlpt                   known share of each JLPT level's (approximate) vocabulary
   mdb search QUERY [-n 20]   search notes (see query.go for syntax)
   mdb known BASE [READING]   mark a word known       (unknown / forget likewise)
   mdb ignore BASE [READING]  ignore a word: neither known nor unknown (unignore = never
@@ -123,6 +124,8 @@ func run(db *sql.DB, cmd string, args []string) error {
 		return serve(db, *addr)
 	case "status":
 		return printStatus(db)
+	case "jlpt":
+		return printJLPT(db)
 	case "search":
 		rs, err := search(db, strings.Join(rest, " "), *limit, 0)
 		if err != nil {

@@ -143,6 +143,9 @@ CREATE INDEX IF NOT EXISTS tagset_assign_tag ON tagset_assign(tag);
 CREATE INDEX IF NOT EXISTS tagset_assign_note ON tagset_assign(note_id);
 CREATE INDEX IF NOT EXISTS tagset_assign_set ON tagset_assign(tagset_id, rank, pos);
 
+-- JLPT list expressions as the parser splits them (jlpt.go): [[base, reading], ...] of the kept tokens
+CREATE TABLE IF NOT EXISTS jlpt_parse(text TEXT PRIMARY KEY, model TEXT NOT NULL, toks TEXT NOT NULL) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS mined(note_id INTEGER NOT NULL, tag TEXT, word TEXT, at INTEGER NOT NULL);
 
 -- pool note -> the study card made from it (when mining created a new note)
