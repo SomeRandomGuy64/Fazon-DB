@@ -12,6 +12,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"regexp"
 	"strings"
 	"time"
@@ -219,6 +220,26 @@ func refreshSuspended(db *sql.DB) ([]int64, error) {
 		}
 	}
 	return changed, nil
+}
+
+// syncSuspended rebuilds the suspended set and applies what changed (known
+// status, i+N, tag sets) outside a sync pass, e.g. when `mdb serve` starts.
+func syncSuspended(db *sql.DB) error {
+	writeMu.Lock()
+	defer writeMu.Unlock()
+	changed, err := refreshSuspended(db)
+	if err != nil || len(changed) == 0 {
+		return err
+	}
+	flipped, err := refreshKnown(db, changed)
+	if err != nil {
+		return err
+	}
+	if _, err := refreshNotes(db, flipped); err != nil {
+		return err
+	}
+	log.Printf("suspended words: %d changed, %d flipped known/unknown", len(changed), len(flipped))
+	return computeTagsets(db)
 }
 
 // excludedMorphs = the suspended words that are not learning targets.

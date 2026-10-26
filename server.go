@@ -20,6 +20,9 @@ import (
 var webFS embed.FS
 
 func serve(db *sql.DB, addr string) error {
+	if err := syncSuspended(db); err != nil {
+		log.Printf("suspended words: %v", err)
+	}
 	go syncLoop(db, time.Minute)
 	go backupLoop(db)
 
