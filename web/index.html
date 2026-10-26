@@ -7,13 +7,13 @@
 <style>
 :root {
   --bg: #f6f5f2; --panel: #ffffff; --ink: #1d1d1f; --muted: #6b6b70; --line: #e4e2dc;
-  --accent: #b5452a; --accent-ink: #fff; --known: #2f7a4d; --unknown: #c0392b; --chip: #efede7;
+  --accent: #b5452a; --accent-ink: #fff; --known: #2f7a4d; --unknown: #c0392b; --susp: #d4a017; --chip: #efede7;
   --hl: #fde8e2; --shadow: 0 1px 2px rgba(0,0,0,.05), 0 4px 16px rgba(0,0,0,.04);
   --jp: "Noto Sans JP", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
 }
 @media (prefers-color-scheme: dark) {
   :root { --bg: #141416; --panel: #1d1d20; --ink: #ececee; --muted: #9a9aa2; --line: #2e2e33;
-    --accent: #e0745a; --accent-ink: #1a1a1a; --known: #6cc191; --unknown: #f0806f; --chip: #2a2a2f; --hl: #3a2420;
+    --accent: #e0745a; --accent-ink: #1a1a1a; --known: #6cc191; --unknown: #f0806f; --susp: #e6c14a; --chip: #2a2a2f; --hl: #3a2420;
     --shadow: none; }
 }
 * { box-sizing: border-box; }
@@ -89,6 +89,8 @@ a { color: var(--accent); }
 .sbar { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: var(--chip); }
 .sbar i { display: block; height: 100%; }
 .sbar .k, .sw.k { background: var(--known); } .sbar .m, .sw.m { background: var(--accent); opacity: .75; }
+.sbar .s, .sw.s { background: var(--susp); }
+.chip.susp { background: var(--susp); color: #1d1d1f; }
 .sbar .u, .sw.u { background: var(--muted); opacity: .35; }
 .sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; vertical-align: -1px; margin-right: 4px; }
 .sw.a { background: var(--chip); border: 1px solid var(--line); }
@@ -351,16 +353,16 @@ const tabs = {
     let cum = { known: 0, total: 0 };
     $('#main').innerHTML = `
       <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(140px,1fr))">${ls.map(l => {
-        const n = l.total - l.untracked - l.ignored, rest = l.unknown - l.minable;
+        const n = l.total - l.untracked - l.ignored, rest = l.unknown - l.minable - l.suspended;
         cum.known += l.known; cum.total += n;
         return `<div class="stat jlvl ${l.level === state.jl ? 'on' : ''}" data-level="${l.level}">
           <div class="v">N${l.level} <small>${pct(l.known, n)}%</small></div>
-          <div class="sbar" title="${fmt(l.known)} known · ${fmt(l.minable)} with i+1 cards · ${fmt(rest)} other unknown · ${fmt(l.absent)} not in your cards">
-            <i class="k" style="width:${pct(l.known, n)}%"></i><i class="m" style="width:${pct(l.minable, n)}%"></i><i class="u" style="width:${pct(rest, n)}%"></i></div>
+          <div class="sbar" title="${fmt(l.known)} known · ${fmt(l.minable)} with i+1 cards · ${fmt(l.suspended)} suspended · ${fmt(rest)} other unknown · ${fmt(l.absent)} not in your cards">
+            <i class="k" style="width:${pct(l.known, n)}%"></i><i class="m" style="width:${pct(l.minable, n)}%"></i><i class="s" style="width:${pct(l.suspended, n)}%"></i><i class="u" style="width:${pct(rest, n)}%"></i></div>
           <div class="k">${fmt(l.known)} / ${fmt(n)} known · ${fmt(n - l.known)} to go</div>
           <div class="k">N5–N${l.level}: ${pct(cum.known, cum.total)}% (${fmt(cum.known)} / ${fmt(cum.total)})</div></div>`; }).join('')}</div>
       <p class="romaji"><span class="sw k"></span>known <span class="sw m" style="margin-left:10px"></span>unknown, has i+1 cards
-        <span class="sw u" style="margin-left:10px"></span>unknown, no i+1 card yet <span class="sw a" style="margin-left:10px"></span>not in your cards ·
+        <span class="sw s" style="margin-left:10px"></span>suspended <span class="sw u" style="margin-left:10px"></span>unknown, no i+1 card yet <span class="sw a" style="margin-left:10px"></span>not in your cards ·
         Approximate lists (no official JLPT lists exist since 2010; these are Jonathan Waller's tanos.co.uk lists). Words your parser splits
         (自転車 = 自転|車) count once every part is known. Numerals aren't counted.</p>
       <h2 id="jlh"></h2>
@@ -380,7 +382,7 @@ const tabs = {
       const ws = await api(`/api/jlpt/words?limit=100&offset=${state.jloff}&level=${state.jl}&status=${state.jls}&q=` + encodeURIComponent(state.jlq));
       $('#jt').innerHTML = `<tr><th class="num">Rank</th><th>Word</th><th>Meaning</th><th>Status</th><th class="num">i+1 cards</th><th></th></tr>` +
         ws.map(w => `<tr><td class="num">${w.rank ? fmt(w.rank) : ''}</td><td>${label(w)}</td><td class="romaji">${esc(w.meaning)}</td>
-          <td class="${stat[w.status][0]}">${stat[w.status][1]}${w.suspended ? ' <span class="chip" title="a suspended Study Deck word: never suggested for mining">suspended</span>' : ''}${w.parts ? `<div class="row" style="margin:4px 0 0;gap:4px">${w.parts.map(p =>
+          <td class="${stat[w.status][0]}">${stat[w.status][1]}${w.suspended ? ' <span class="chip susp" title="a suspended Study Deck word: never suggested for mining">suspended</span>' : ''}${w.parts ? `<div class="row" style="margin:4px 0 0;gap:4px">${w.parts.map(p =>
             `<span class="chip jp ${p.known ? '' : 'unk'}" title="${p.known ? 'known' : 'unknown'}">${esc(p.base)}</span>`).join('<span class="romaji">+</span>')}</div>` : ''}</td>
           <td class="num">${w.i1_cards ? `<a href="#" data-unk="${esc(w.base)}">${fmt(w.i1_cards)}</a>` : 0}</td>
           <td>${w.status === 'known' || !w.base ? '' : `<button class="btn" data-b="${esc(w.base)}" data-r="${esc(w.m_reading)}">Mark ${w.parts ? `<span class="jp">${esc(w.base)}</span> ` : ''}known</button>`}</td></tr>`).join('') ||
