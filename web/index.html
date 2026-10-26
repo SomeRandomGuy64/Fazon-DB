@@ -27,7 +27,7 @@ nav button { background: none; border: 0; color: var(--muted); padding: 6px 12px
 nav button.on { background: var(--panel); color: var(--ink); box-shadow: var(--shadow); }
 #syncinfo { margin-left: auto; color: var(--muted); font-size: 12px; display: flex; gap: 10px; align-items: center; }
 main { max-width: 1180px; margin: 0 auto; padding: 20px 24px 80px; }
-.btn { background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer; font: inherit; }
+.btn { white-space: nowrap; background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer; font: inherit; }
 .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 .btn:disabled { opacity: .5; cursor: default; }
 input[type=search], input[type=text], select { background: var(--panel); color: var(--ink); border: 1px solid var(--line);
@@ -61,6 +61,7 @@ tr.click { cursor: pointer; } tr.click:hover td { background: var(--chip); }
 .chip.unk { background: var(--hl); color: var(--unknown); }
 .chip.tag { font-family: ui-monospace, monospace; font-size: 11px; }
 mark { background: var(--hl); color: var(--unknown); border-radius: 3px; padding: 0 1px; }
+a { color: var(--accent); }
 .empty { color: var(--muted); padding: 30px; text-align: center; }
 .known { color: var(--known); } .unknown { color: var(--unknown); }
 .jp { font-family: var(--jp); }
@@ -107,6 +108,7 @@ mark { background: var(--hl); color: var(--unknown); border-radius: 3px; padding
     <button data-tab="words">Words</button>
     <button data-tab="tagsets">Tag sets</button>
     <button data-tab="jlpt">JLPT</button>
+    <button data-tab="suspended">Suspended</button>
   </nav>
   <div id="syncinfo"><span id="synctext"></span><button class="btn" id="syncbtn">Sync now</button></div>
 </header>
@@ -209,7 +211,7 @@ const tabs = {
         <td><div class="bar"><i style="width:${t.targets ? 100 * t.placed / t.targets : 0}%"></i></div></td></tr>`).join('')}</table>
       <p class="romaji">Last import ${ago(s.last_import)} · last backup ${ago(s.last_backup)}</p>`;
     document.querySelectorAll('tr[data-prefix]').forEach(tr => tr.onclick = () => { state.tsPrefix = tr.dataset.prefix; show('tagsets'); });
-    const next = await api('/api/search?q=' + encodeURIComponent('i:1 pool:1') + '&limit=12');
+    const next = await api('/api/search?q=' + encodeURIComponent('i:1 pool:1 susp:0') + '&limit=12');
     $('#next').innerHTML = next.map(r => cardHTML(r)).join('') || '<div class="empty">No i+1 cards.</div>';
     wireCards($('#next'));
   },
@@ -307,6 +309,42 @@ const tabs = {
     run();
   },
 
+  async suspended() {
+    const r = await api('/api/suspended'), ws = r.words;
+    const n = k => ws.filter(k).length;
+    const wf = w => w.replace(/<br\s*\/?>/g, ' / ').replace(/:[\x21-\x7e]*/g, '').replace(/\[[^\]]*\]/g, '').replace(/\s+/g, '');
+    $('#main').innerHTML = `
+      <div class="grid">
+        <div class="stat"><div class="v">${fmt(ws.length)}</div><div class="k">suspended Study Deck words</div></div>
+        <div class="stat"><div class="v">${fmt(n(w => !w.allowed && !w.known))}</div><div class="k">excluded from learning</div></div>
+        <div class="stat"><div class="v">${fmt(n(w => w.allowed && !w.known))}</div><div class="k">allowed by you</div></div>
+        <div class="stat"><div class="v">${fmt(n(w => w.known))}</div><div class="k">marked known by hand</div></div>
+      </div>
+      <p class="romaji">The target word of every suspended Study Deck card. It always counts as <b>unknown</b>, so it keeps blocking i+1
+        (even if you reviewed it before suspending). It is never a learning target: tag sets, "Next to mine" and JLPT "to mine" skip it,
+        until you <b>Allow learning</b>. Unsuspend the card in Anki and it leaves this list at the next sync.</p>
+      <div class="tscroll"><table>
+        <tr><th class="num">Rank</th><th>Word</th><th>Study Deck card</th><th class="num">i+1 cards</th><th>Status</th><th></th></tr>
+        ${ws.map(w => `<tr><td class="num">${w.rank ? fmt(w.rank) : ''}</td><td style="white-space:nowrap">${wordLabel(w.base, w.reading)}</td>
+          <td><a href="#" data-nid="${w.nid}" class="jp">${esc(wf(w.word))}</a><div class="romaji jp">${esc((w.sentence || '').replace(/<[^>]+>/g, '').replace(/\[[^\]]*\]/g, '').replace(/\s+/g, ''))}</div></td>
+          <td class="num">${w.i1_cards ? `<a href="#" data-unk="${esc(w.base)}">${fmt(w.i1_cards)}</a>` : 0}</td>
+          <td class="${w.known ? 'known' : w.allowed ? 'unknown' : 'romaji'}">${w.known ? 'known (manual)' : w.allowed ? 'allowed' : 'excluded'}</td>
+          <td><div class="row" style="margin:0;flex-wrap:nowrap">
+            ${w.known ? '' : `<button class="btn" data-allow="${w.allowed ? 0 : 1}" data-b="${esc(w.base)}" data-r="${esc(w.reading)}">${w.allowed ? 'Exclude again' : 'Allow learning'}</button>`}
+            <button class="btn" data-mark="${w.known ? 'forget' : 'known'}" data-b="${esc(w.base)}" data-r="${esc(w.reading)}">${w.known ? 'Undo known' : 'Mark known'}</button></div></td></tr>`).join('') ||
+          '<tr><td colspan="6" class="empty">No suspended Study Deck cards.</td></tr>'}
+      </table></div>
+      ${r.unmatched.length ? `<h2>Suspended cards whose Word matched no word</h2>
+        <p class="romaji">Grammar or numerals the parser doesn't count as a word, so there is nothing to block.</p>
+        <div class="row">${r.unmatched.map(u => `<a href="#" class="chip jp" data-nid="${u.nid}">${esc(wf(u.word))}</a>`).join('')}</div>` : ''}`;
+    $('#main').querySelectorAll('a[data-nid]').forEach(a => a.onclick = e => { e.preventDefault(); openNote(a.dataset.nid); });
+    $('#main').querySelectorAll('[data-unk]').forEach(a => a.onclick = e => { e.preventDefault(); state.q = 'i:1 unk:' + a.dataset.unk; state.off = 0; show('search'); });
+    $('#main').querySelectorAll('[data-allow]').forEach(b => b.onclick = async () => {
+      b.disabled = true; await api('/api/suspended/allow', {method: 'POST', body: JSON.stringify({base: b.dataset.b, reading: b.dataset.r, allow: b.dataset.allow === '1'})}); show('suspended'); });
+    $('#main').querySelectorAll('[data-mark]').forEach(b => b.onclick = async () => {
+      b.disabled = true; await api('/api/word/mark', {method: 'POST', body: JSON.stringify({base: b.dataset.b, reading: b.dataset.r, how: b.dataset.mark})}); show('suspended'); });
+  },
+
   async jlpt() {
     const ls = await api('/api/jlpt');
     const pct = (a, b) => b ? (100 * a / b).toFixed(1) : '0.0';
@@ -328,7 +366,7 @@ const tabs = {
       <h2 id="jlh"></h2>
       <div class="row"><input type="search" id="jq" placeholder="Filter (word, reading or English)" value="${esc(state.jlq)}">
         <select id="js"><option value="minable">To mine (has i+1 cards)</option><option value="unknown">Unknown</option><option value="absent">Not in your cards</option>
-          <option value="known">Known</option><option value="all">All</option></select></div>
+          <option value="suspended">Suspended</option><option value="known">Known</option><option value="all">All</option></select></div>
       <div class="tscroll"><table id="jt"></table></div><div class="pager" id="jpg"></div>`;
     $('#js').value = state.jls;
     document.querySelectorAll('.jlvl').forEach(c => c.onclick = () => { state.jl = +c.dataset.level; state.jloff = 0; show('jlpt'); });
@@ -342,7 +380,7 @@ const tabs = {
       const ws = await api(`/api/jlpt/words?limit=100&offset=${state.jloff}&level=${state.jl}&status=${state.jls}&q=` + encodeURIComponent(state.jlq));
       $('#jt').innerHTML = `<tr><th class="num">Rank</th><th>Word</th><th>Meaning</th><th>Status</th><th class="num">i+1 cards</th><th></th></tr>` +
         ws.map(w => `<tr><td class="num">${w.rank ? fmt(w.rank) : ''}</td><td>${label(w)}</td><td class="romaji">${esc(w.meaning)}</td>
-          <td class="${stat[w.status][0]}">${stat[w.status][1]}${w.parts ? `<div class="row" style="margin:4px 0 0;gap:4px">${w.parts.map(p =>
+          <td class="${stat[w.status][0]}">${stat[w.status][1]}${w.suspended ? ' <span class="chip" title="a suspended Study Deck word: never suggested for mining">suspended</span>' : ''}${w.parts ? `<div class="row" style="margin:4px 0 0;gap:4px">${w.parts.map(p =>
             `<span class="chip jp ${p.known ? '' : 'unk'}" title="${p.known ? 'known' : 'unknown'}">${esc(p.base)}</span>`).join('<span class="romaji">+</span>')}</div>` : ''}</td>
           <td class="num">${w.i1_cards ? `<a href="#" data-unk="${esc(w.base)}">${fmt(w.i1_cards)}</a>` : 0}</td>
           <td>${w.status === 'known' || !w.base ? '' : `<button class="btn" data-b="${esc(w.base)}" data-r="${esc(w.m_reading)}">Mark ${w.parts ? `<span class="jp">${esc(w.base)}</span> ` : ''}known</button>`}</td></tr>`).join('') ||
@@ -423,7 +461,7 @@ async function openNote(nid) {
   });
 }
 
-const state = { q: 'i:1 pool:1', off: 0, wq: '', wk: '0', woff: 0, tsPrefix: '', toff: 0, dq: '', deck: '', doff: 0, di: '', jl: 5, jls: 'minable', jlq: '', jloff: 0, tab: 'overview' };
+const state = { q: 'i:1 pool:1 susp:0', off: 0, wq: '', wk: '0', woff: 0, tsPrefix: '', toff: 0, dq: '', deck: '', doff: 0, di: '', jl: 5, jls: 'minable', jlq: '', jloff: 0, tab: 'overview' };
 try { Object.assign(state, JSON.parse(localStorage.getItem('mdb-state') || '{}')); } catch {}
 function save() { try { const { _dqt, ...s } = state; localStorage.setItem('mdb-state', JSON.stringify(s)); } catch {} }
 function show(tab) {

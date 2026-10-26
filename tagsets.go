@@ -379,7 +379,8 @@ func computeTagsets(db *sql.DB) error {
 	// UniDic lemmas like 為る / チャンネル-channel), so a target matches either
 	// the dictionary form or the UniDic lemma.
 	rows, err = db.Query(`SELECT n.id, COALESCE(n.deck_id,0), COALESCE(n.sentence,''), n.clen, m.base, COALESCE(m.lemma,'')
-	   FROM notes n JOIN morphs m ON m.id = n.unk_morph WHERE n.n_unknown = 1`)
+	   FROM notes n JOIN morphs m ON m.id = n.unk_morph WHERE n.n_unknown = 1
+	   AND n.unk_morph NOT IN (`+excludedSQL+`)`)
 	if err != nil {
 		return err
 	}

@@ -124,6 +124,21 @@ func syncOnce(db *sql.DB, days int, full bool) (syncStats, error) {
 	if err := ac("findCards", map[string]any{"query": q}, &cids); err != nil {
 		return st, err
 	}
+	// suspending/unsuspending touches neither the note nor a review: check the
+	// Study Deck's suspended cards (and the ones held as suspended) every pass
+	var susp []int64
+	if err := ac("findCards", map[string]any{"query": `"deck:` + studyDeck + `" is:suspended`}, &susp); err != nil {
+		return st, err
+	}
+	cids = append(cids, susp...)
+	if rows, err := db.Query(`SELECT id FROM cards WHERE queue = -1 AND deck_id IN (` + studyDeckSQL + `)`); err == nil {
+		for rows.Next() {
+			var id int64
+			rows.Scan(&id)
+			cids = append(cids, id)
+		}
+		rows.Close()
+	}
 	changedCards, err := changedByMod(db, "cards", "cardsModTime", "cardId", cids)
 	if err != nil {
 		return st, err
@@ -163,6 +178,15 @@ func syncOnce(db *sql.DB, days int, full bool) (syncStats, error) {
 
 	// ---- incremental recalc
 	touchedMorphs := map[int64]bool{}
+	if len(toParse) == 0 { // reparsed notes refresh it below, once their words are in
+		ms, err := refreshSuspended(db)
+		if err != nil {
+			return st, err
+		}
+		for _, m := range ms {
+			touchedMorphs[m] = true
+		}
+	}
 	for _, m := range morphsOfNotes(db, touchedNotes) {
 		touchedMorphs[m] = true
 	}
@@ -175,6 +199,13 @@ func syncOnce(db *sql.DB, days int, full bool) (syncStats, error) {
 			touchedMorphs[m] = true
 		}
 		st.reparsed = len(toParse)
+		sm, err := refreshSuspended(db)
+		if err != nil {
+			return st, err
+		}
+		for _, m := range sm {
+			touchedMorphs[m] = true
+		}
 	}
 	ids := keys(touchedMorphs)
 	flipped, err := refreshKnown(db, ids)

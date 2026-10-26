@@ -19,6 +19,9 @@ package main
 //              reading of the spelling only, no single-kana fragments
 //   learned  - it was known at some point (the learned table keeps every
 //              known word for good, so the database stands without Anki)
+//
+// A suspended word (target of a suspended Study Deck card, suspended.go) is
+// never known through review / ankimorphs / learned: only a manual mark beats it.
 
 import (
 	"database/sql"
@@ -68,7 +71,8 @@ func deriveKnown(db *sql.DB, ids []int64) (map[int64]knownState, error) {
 	   CASE WHEN `+amEligible+` THEN COALESCE((SELECT src FROM am_known a WHERE a.lemma=m.base), (SELECT src FROM am_known a WHERE a.lemma=m.lemma)) END,
 	   (SELECT src FROM learned l WHERE l.base=m.base AND l.reading=m.reading),
 	   (SELECT ignored FROM ignore_marks im WHERE im.base=m.base AND im.reading=m.reading),
-	   ` + fragmentSQL + `
+	   ` + fragmentSQL + `,
+	   EXISTS(SELECT 1 FROM suspended_words s WHERE s.morph_id=m.id)
 	   FROM morphs m` + filter)
 	if err != nil {
 		return nil, err
@@ -81,14 +85,16 @@ func deriveKnown(db *sql.DB, ids []int64) (map[int64]knownState, error) {
 		var review bool
 		var am, learned sql.NullString
 		var ignoreMark sql.NullInt64
-		var fragment bool
-		if err := rows.Scan(&id, &base, &reading, &manual, &review, &am, &learned, &ignoreMark, &fragment); err != nil {
+		var fragment, suspended bool
+		if err := rows.Scan(&id, &base, &reading, &manual, &review, &am, &learned, &ignoreMark, &fragment, &suspended); err != nil {
 			return nil, err
 		}
 		var st knownState
 		switch {
 		case manual.Valid:
 			st = knownState{known: manual.Int64 == 1, src: "manual"}
+		case suspended:
+			st = knownState{known: false, src: "suspended"}
 		case review:
 			st = knownState{known: true, src: "review"}
 		case learned.Valid:
@@ -231,6 +237,9 @@ func refreshPriority(db *sql.DB) error {
 func recalcAll(db *sql.DB) error {
 	t0 := time.Now()
 	if err := refreshPriority(db); err != nil {
+		return err
+	}
+	if _, err := refreshSuspended(db); err != nil {
 		return err
 	}
 	flipped, err := refreshKnown(db, nil)

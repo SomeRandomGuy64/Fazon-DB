@@ -111,6 +111,31 @@ func serve(db *sql.DB, addr string) error {
 		}
 		writeJSON(w, ws)
 	})
+	mux.HandleFunc("/api/suspended", func(w http.ResponseWriter, r *http.Request) {
+		rs, err := listSuspended(db)
+		if err != nil {
+			httpErr(w, err)
+			return
+		}
+		writeJSON(w, map[string]any{"words": rs, "unmatched": unmatchedSuspended(db)})
+	})
+	mux.HandleFunc("/api/suspended/allow", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST", 405)
+			return
+		}
+		var req struct {
+			Base, Reading string
+			Allow         bool
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		n, err := allowWord(db, req.Base, req.Reading, req.Allow)
+		if err != nil {
+			httpErr(w, err)
+			return
+		}
+		writeJSON(w, map[string]int{"updated": n})
+	})
 	mux.HandleFunc("/api/tagset", func(w http.ResponseWriter, r *http.Request) {
 		rs, err := tagsetView(db, r.URL.Query().Get("prefix"), intParam(r, "limit", 50), intParam(r, "offset", 0))
 		if err != nil {

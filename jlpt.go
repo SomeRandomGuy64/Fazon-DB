@@ -169,6 +169,7 @@ type jlptMorph struct {
 	pos                  string
 	rank, i1             int
 	known, ignored       bool
+	excluded             bool // suspended, not allowed
 }
 
 type jlptPart struct {
@@ -183,12 +184,14 @@ type jlptWord struct {
 	Reading string `json:"reading"`
 	Meaning string `json:"meaning"`
 	// known | unknown (in your cards) | ignored | absent (no card has it) | untracked (numerals etc.)
-	Status   string     `json:"status"`
-	Base     string     `json:"base,omitempty"` // the word to mark / search: the match, or a compound's first unknown part
-	MReading string     `json:"m_reading,omitempty"`
-	Rank     int        `json:"rank,omitempty"`
-	IPlus1   int        `json:"i1_cards"`
-	Parts    []jlptPart `json:"parts,omitempty"` // set when the parser splits the word
+	Status   string `json:"status"`
+	Base     string `json:"base,omitempty"` // the word to mark / search: the match, or a compound's first unknown part
+	MReading string `json:"m_reading,omitempty"`
+	Rank     int    `json:"rank,omitempty"`
+	IPlus1   int    `json:"i1_cards"`
+	// an unknown (part of the) word is a suspended Study Deck word: never a mining target
+	Suspended bool       `json:"suspended,omitempty"`
+	Parts     []jlptPart `json:"parts,omitempty"` // set when the parser splits the word
 }
 
 // jlptMatch resolves every list entry against the current morphs.
@@ -228,6 +231,11 @@ func jlptMatch(db *sql.DB) ([]jlptWord, error) {
 		}
 	}
 	rows.Close()
+	for id := range excludedMorphs(db) {
+		if m := all[id]; m != nil {
+			m.excluded = true
+		}
+	}
 
 	var out []jlptWord
 	for _, e := range loadJLPT() {
@@ -255,6 +263,7 @@ func jlptMatch(db *sql.DB) ([]jlptWord, error) {
 				case !m.ignored && w.Status != "known":
 					w.Status = "unknown"
 					w.IPlus1 += m.i1
+					w.Suspended = w.Suspended || m.excluded
 				case w.Status == "absent":
 					w.Status = "ignored"
 				}
@@ -267,7 +276,7 @@ func jlptMatch(db *sql.DB) ([]jlptWord, error) {
 			jlptCompound(&w, e, parts, byKey, byBase)
 		}
 		if w.Status == "known" {
-			w.IPlus1 = 0
+			w.IPlus1, w.Suspended = 0, false
 		}
 		out = append(out, w)
 	}
@@ -310,6 +319,7 @@ func jlptCompound(w *jlptWord, e jlptEntry, parts map[string]jlptSplit, byKey ma
 		for _, m := range ms {
 			if !m.known {
 				unk = append(unk, m)
+				w.Suspended = w.Suspended || m.excluded
 			}
 			if m.rank > w.Rank || m.rank == 0 { // a compound is as rare as its rarest part
 				w.Rank = m.rank
@@ -342,7 +352,7 @@ type jlptLevel struct {
 	Level     int `json:"level"`
 	Total     int `json:"total"`
 	Known     int `json:"known"`
-	Minable   int `json:"minable"` // unknown, with at least one i+1 card
+	Minable   int `json:"minable"` // unknown, not suspended, with at least one i+1 card
 	Unknown   int `json:"unknown"` // unknown, in your cards (minable included)
 	Ignored   int `json:"ignored"`
 	Absent    int `json:"absent"`
@@ -366,7 +376,7 @@ func jlptSummary(db *sql.DB) ([]jlptLevel, error) {
 			l.Known++
 		case "unknown":
 			l.Unknown++
-			if w.IPlus1 > 0 {
+			if w.IPlus1 > 0 && !w.Suspended {
 				l.Minable++
 			}
 		case "ignored":
@@ -400,7 +410,7 @@ func jlptList(db *sql.DB, level int, status, q string, limit, offset int) ([]jlp
 		if q != "" && !strings.Contains(strings.ToLower(w.Expr+" "+w.Reading+" "+w.Meaning), q) {
 			continue
 		}
-		if status == "" || status == "all" || w.Status == status || (status == "minable" && w.IPlus1 > 0) {
+		if status == "" || status == "all" || w.Status == status || (status == "minable" && w.IPlus1 > 0 && !w.Suspended) || (status == "suspended" && w.Suspended) {
 			out = append(out, w)
 		}
 	}
