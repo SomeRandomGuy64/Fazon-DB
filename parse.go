@@ -18,21 +18,55 @@ import (
 	"time"
 )
 
-// modelFingerprint identifies the parser model, so a model upgrade shows up as
-// "N notes parsed with an older model" and `mdb reparse` redoes them.
+// modelFingerprint covers analyzer code/data and both reading models. A tokenizer
+// migration must invalidate parsed notes even when neural weights are unchanged.
 func modelFingerprint() string {
 	h := sha1.New()
-	for _, f := range []string{"rd_config.json", "extras.json", "model.safetensors"} {
-		p := filepath.Join(modelDir, f)
-		if st, err := os.Stat(p); err == nil {
-			fmt.Fprintf(h, "%s:%d:%d;", f, st.Size(), st.ModTime().Unix())
+	for _, name := range []string{"candgen.py", "rd_model.py", "reading_disambig.py", "analyzers.py", "word_merge.py"} {
+		if b, err := os.ReadFile(filepath.Join(parserDir, name)); err == nil {
+			fmt.Fprintf(h, "%s:", name)
+			h.Write(b)
 		}
 	}
-	if b, err := os.ReadFile(filepath.Join(modelDir, "rd_config.json")); err == nil {
+	if b, err := os.ReadFile(workerPy); err == nil {
 		h.Write(b)
 	}
-	if b, err := os.ReadFile(workerPy); err == nil { // filtering rules live in the worker
+	dirs := []string{modelDir}
+	if b, err := os.ReadFile(filepath.Join(modelDir, "rd_config.json")); err == nil {
+		var cfg struct {
+			VariantModel string `json:"variant_model"`
+		}
+		if json.Unmarshal(b, &cfg) == nil && cfg.VariantModel != "" {
+			vdir := cfg.VariantModel
+			if !filepath.IsAbs(vdir) {
+				vdir = filepath.Join(parserDir, vdir)
+			}
+			dirs = append(dirs, vdir)
+		}
+	}
+	for _, dir := range dirs {
+		fmt.Fprintf(h, "model:%s;", dir)
+		for _, name := range []string{"rd_config.json", "extras.json", "config.json", "tokenizer_config.json", "special_tokens_map.json"} {
+			if b, err := os.ReadFile(filepath.Join(dir, name)); err == nil {
+				fmt.Fprintf(h, "%s:", name)
+				h.Write(b)
+			}
+		}
+		for _, name := range []string{"model.safetensors", "tokenizer.json", "tokenizer.model"} {
+			if st, err := os.Stat(filepath.Join(dir, name)); err == nil {
+				fmt.Fprintf(h, "%s:%d:%d;", name, st.Size(), st.ModTime().UnixNano())
+			}
+		}
+	}
+	fmt.Fprintf(h, "backend:%s;", envOr("MDB_PARSER_BACKEND", "sudachi"))
+	// Query installed metadata, never the network. Dictionary package upgrades
+	// change token identities even when all application files stay the same.
+	script := `import importlib.metadata as m, json
+print(json.dumps({p:m.version(p) for p in ['sudachipy','sudachidict-full','jamdict','jamdict-data','transformers','torch']},sort_keys=True))`
+	if b, err := exec.Command("python3", "-c", script).Output(); err == nil {
 		h.Write(b)
+	} else {
+		fmt.Fprintf(h, "runtime-metadata-unavailable:%v;", err)
 	}
 	return hex.EncodeToString(h.Sum(nil))[:12]
 }
