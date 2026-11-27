@@ -27,6 +27,8 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -43,11 +45,16 @@ const studiedNotesSQL = `SELECT note_id FROM cards WHERE type != 0
 const amEligible = `NOT EXISTS (SELECT 1 FROM morphs m2 WHERE m2.base = m.base AND m2.freq > m.freq)
 	   AND NOT (length(m.base) = 1 AND m.base GLOB '[ぁ-ゖァ-ヺ]')`
 
-// Single-kana parser fragments (ぎ, び, そ) are IGNORED by default: they count
-// as neither known nor unknown, so they never gate i+1 and never inflate the
-// known count. A fragment that is genuinely known (particles like は) stays
-// known; `mdb unignore` / the Words tab overrides the default per word.
-const fragmentSQL = `(length(m.base) = 1 AND m.base GLOB '[ぁ-ゖァ-ヺ]')`
+// Single-kana parser fragments (ぎ, び, そ) and single-kanji suffixes (日本|中,
+// 運転|手) are IGNORED by default: they count as neither known nor unknown, so
+// they never gate i+1 and never inflate the known count. A fragment that is
+// genuinely known (particles like は) stays known; `mdb unignore` / the Words
+// tab overrides the default per word.
+// Non-dictionary words are ignored the same way: a spelling the dictionary
+// lists, read in a way it doesn't (分 わ is only the stem of 分かる). See
+// parser/dict_words.py; Kansai forms and unlisted spellings are never flagged.
+const fragmentSQL = `((length(m.base) = 1 AND (m.base GLOB '[ぁ-ゖァ-ヺ]' OR (m.pos = '接尾辞' AND m.base GLOB '[一-鿿]')))
+	   OR EXISTS(SELECT 1 FROM nondict_words nd WHERE nd.base = m.base AND nd.reading = m.reading))`
 
 type knownState struct {
 	known   bool
@@ -241,6 +248,11 @@ func recalcAll(db *sql.DB) error {
 	}
 	if _, err := refreshSuspended(db); err != nil {
 		return err
+	}
+	if out, err := exec.Command("python3", filepath.Join(projectDir, "parser", "dict_words.py"), dbPath).CombinedOutput(); err != nil {
+		log.Printf("dict_words: %v: %s", err, out) // non-fatal: the previous nondict_words table stays
+	} else {
+		log.Printf("dict_words: %s", strings.TrimSpace(string(out)))
 	}
 	flipped, err := refreshKnown(db, nil)
 	if err != nil {

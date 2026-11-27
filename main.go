@@ -22,6 +22,8 @@ const usage = `mdb — Fazon-DB
 Setup / rebuild
   mdb import                 pull notes, cards, tags, context, AnkiMorphs known lemmas, tag sets from Anki
   mdb parse [-j 2]           tokenize notes whose text or parser model changed (resumable)
+  mdb parse-selected FILE   reparse newline-separated note IDs with context
+  mdb parse-note ID         reparse one note/card with neighboring context
   mdb reparse [-j 2]         re-tokenize everything (after improving the model)
   mdb recalc                 full rebuild of priority list, known words, i+N, tag sets
   mdb import-tagsets         re-read the *_daily add-on configs + targets.csv
@@ -39,7 +41,8 @@ Day to day
   mdb mark-file FILE         bulk marks, one per line: ACTION<TAB>BASE<TAB>READING
                              (ACTION = known|unknown|forget|ignore|unignore|auto); one recount
   mdb ignore BASE [READING]  ignore a word: neither known nor unknown (unignore = never
-                             ignore; auto = back to the default: single-kana fragments ignored)
+                             ignore; auto = back to the default: single-kana fragments and
+                             single-kanji suffixes ignored)
   mdb backup                 snapshot + upload to Hetzner
 
 Long-term (database first, Anki only for reviews)
@@ -95,6 +98,32 @@ func run(db *sql.DB, cmd string, args []string) error {
 			return err
 		}
 		return recalcAll(db)
+	case "parse-selected":
+		if len(rest) != 1 {
+			return fmt.Errorf("usage: mdb parse-selected FILE")
+		}
+		data, err := os.ReadFile(rest[0])
+		if err != nil {
+			return err
+		}
+		ids := []int64{}
+		for _, value := range strings.Fields(string(data)) {
+			id, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return err
+			}
+			ids = append(ids, id)
+		}
+		return cmdParseSelected(db, ids)
+	case "parse-note":
+		if len(rest) != 1 {
+			return fmt.Errorf("usage: mdb parse-note ID")
+		}
+		id, err := strconv.ParseInt(rest[0], 10, 64)
+		if err != nil {
+			return err
+		}
+		return cmdParseNote(db, id)
 	case "reparse":
 		if err := cmdParse(db, *jobs, true); err != nil {
 			return err

@@ -117,6 +117,10 @@ CREATE TABLE IF NOT EXISTS learned(base TEXT NOT NULL, reading TEXT NOT NULL, sr
 -- per-word override of the ignore rule (1 = ignore, 0 = never ignore)
 CREATE TABLE IF NOT EXISTS ignore_marks(base TEXT NOT NULL, reading TEXT NOT NULL, ignored INTEGER NOT NULL, at INTEGER,
   PRIMARY KEY(base, reading)) WITHOUT ROWID;
+-- words whose spelling a dictionary lists but whose reading it doesn't (分 わ, 冷蔵庫 れいぞうくら);
+-- written by parser/dict_words.py at each full recalc, ignored by default like fragments
+CREATE TABLE IF NOT EXISTS nondict_words(base TEXT NOT NULL, reading TEXT NOT NULL,
+  PRIMARY KEY(base, reading)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS manual_known(base TEXT NOT NULL, reading TEXT NOT NULL, known INTEGER NOT NULL, at INTEGER,
   PRIMARY KEY(base, reading)) WITHOUT ROWID;
 

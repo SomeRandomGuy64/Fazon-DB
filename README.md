@@ -2,7 +2,7 @@
 
 A local sentence-mining database that replaces AnkiMorphs. It holds every subs2srs
 (`Database::*`) card and every mined MvJ card, with all fields and the MvJ context. Each card
-is tokenized with **your reading model** (`jev_parser_test/models/best`: UniDic segmentation,
+is tokenized with **your reading model** (`jev_parser_test/models/best`: Sudachi Full C-mode segmentation,
 ModernBERT homograph readings). Known words, i+N, the frequency priority list and the mining
 tag sets are kept up to date incrementally, so there is never a full recalc.
 
@@ -39,6 +39,33 @@ tag sets are kept up to date incrementally, so there is never a full recalc.
 - Moving to another SRS: `./mdb export DIR` writes `notes.jsonl` and `known_words.csv`.
   `./mdb import-known FILE` reads known words back from any app. `sync.go` is the only
   Anki-specific part to replace.
+
+## Sudachi parser migration (2026-11-04)
+
+The worker uses the shared `reading_disambig` Sudachi adapter, including separate
+surface and dictionary-form readings, preserved A/B alternatives, and the existing
+main + variant reading models. Its card and live-furigana JSON row formats remain
+compatible. Existing symbol/numeral/proper-noun/OOV filters remain in the worker.
+An explicit fallback is available with `MDB_PARSER_BACKEND=unidic` (or the worker's
+`--backend unidic`); it retains the previous UniDic merge repairs.
+
+The expanded reading gate also checks common readings against a conflicting
+analyzer baseline without requiring two separate common JMdict entries. Existing
+model targets retain their candidate lists. `--legacy-gate` on the Python worker
+restores the earlier gate for diagnosis. See [expanded gate notes](../../jev_parser_test/EXPANDED_GATE.md).
+Numeric dates/counters are protected from newly expanded overrides when the
+analyzer already supplies a reading. See [counter protection](../../jev_parser_test/COUNTER_GUARD.md).
+`./mdb parse-selected FILE` repairs newline-separated note IDs with independent
+same-deck neighbor contexts and one derived-count rebuild.
+`./mdb parse-note ID` repairs one stored note/card with same-deck neighbor context
+and rebuilds the derived database counts.
+
+Parser freshness now includes adapter/shared-code changes, installed Sudachi
+and dictionary versions, backend selection, and both model configurations. A
+migration requires `./mdb parse` to refresh old notes and recompute frequencies,
+known status, i+N, and tag sets. Manual knowledge marks are preserved.
+
+Validation and limitations: [migration report](../../jev_parser_test/SUDACHI_MIGRATION_REPORT.md).
 
 ## Common jobs
 

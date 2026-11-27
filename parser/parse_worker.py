@@ -1,9 +1,10 @@
 """JSONL tokenizer worker for Fazon-DB: Faizan's reading-disambiguation model.
 
-UniDic (fugashi) splits the text; the ModernBERT cross-encoder in
+Sudachi Full supplies primary word spans; the ModernBERT cross-encoder in
 jev_parser_test/models/best picks the reading of every homograph token, with
 the rd_config extras (deterministic rules, hybrid variant model) applied the
-same way reading_disambig.Disambiguator does.
+same way reading_disambig.Disambiguator does. jev_parser_test/word_merge.py then
+joins pieces Sudachi over-splits (なん|か, そう|いう, お|願い) into one word.
 
 stdin, one JSON object per line:
     {"lines": [{"id": 123, "text": "..."}, ...]}
@@ -24,20 +25,25 @@ Live mode (for the /mvj-mine bridge's furigana, via mdb serve's /api/parse):
   surface_reading is the in-context reading of the written form (飲ん -> のん,
   来 -> き), or "" when it can't be derived.
 """
-import json, os, re, sys, unicodedata
+import argparse, functools, json, os, re, sys, unicodedata
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PARSER_DIR = os.path.expanduser("~/Language Learning/jev_parser_test")
+PARSER_DIR = os.environ.get("MDB_PARSER_DIR", os.path.expanduser("~/Language Learning/jev_parser_test"))
 MODEL_DIR = os.path.join(PARSER_DIR, "models", "best")
 sys.path.insert(0, PARSER_DIR)
 
 import reading_disambig as RD  # noqa: E402
 import candgen as C  # noqa: E402
+import word_merge as WM  # noqa: E402
 
 SKIP_POS1 = {"補助記号", "記号", "空白"}
 _TAG = re.compile(r"<[^>]+>")
 _BRACKETS = [re.compile(r"\[[^\]]*\]"), re.compile(r"（[^）]*）"), re.compile(r"\([^)]*\)")]
 _NUM = re.compile(r"[0-9０-９]")
+# Stretch marks after hiragana/kanji are elongation, not spelling: Sudachi turns 来たー into 来|たー
+# (a bogus word たー), でかーい into で|かー|い, 強ーい into 強(きょう)|ー|い. They're dropped before
+# analysis and the tokens mapped back, so each surface still shows its ー. Katakana keeps ー (ゲーム).
+_STRETCH = re.compile(r"(?<=[ぁ-ゖ一-龯々〆])[ー〜～]+")
 
 
 def clean(text):
@@ -46,6 +52,33 @@ def clean(text):
     for rx in _BRACKETS:
         t = rx.sub("", t)
     return re.sub(r"[\r\n  ]+", " ", t).strip()
+
+
+def unstretch(text):
+    """text → (text without stretch marks, original index of each kept char + end, removed indices)."""
+    gone = {i for m in _STRETCH.finditer(text) for i in range(m.start(), m.end())}
+    if not gone:
+        return text, None, gone
+    idx = [i for i in range(len(text)) if i not in gone]
+    return "".join(text[i] for i in idx), idx + [len(text)], gone
+
+
+def restretch(toks, text, idx, gone):
+    """Map tokens of the unstretched text back onto `text`: offsets move, and each surface takes the
+    stretch marks that directly follow it (来た + ー → surface たー, base/reading stay た)."""
+    if idx is None:
+        return toks
+    for t in toks:
+        a = t["offset"]
+        b = a + len(t["surface"])
+        start = idx[a] if a < len(idx) - 1 else len(text)
+        end = idx[b - 1] + 1 if b > a else start
+        while end < len(text) and end in gone:
+            end += 1
+        t["offset"], t["surface"] = start, text[start:end]
+        if "end" in t:
+            t["end"] = end
+    return toks
 
 
 def keep(w, tok):
@@ -61,6 +94,8 @@ def keep(w, tok):
 
 def surface_reading(t):
     """Reading of the written form, given the model's dictionary-form reading."""
+    if not t.get("reading"):
+        return ""
     if not t["changed"]:
         return t["kana"]
     surf, base, new = t["surface"], t["base"], t["reading"]
@@ -76,10 +111,84 @@ def surface_reading(t):
     return new[:len(new) - len(btail)] + C.hira(stail)
 
 
+@functools.lru_cache(maxsize=None)
+def kinki_readings():
+    """Kinki accent dictionary: spelling → readings (hiragana)."""
+    import csv
+    out = {}
+    path = os.path.expanduser("~/Language Learning/Keihan/kinki_accent.merged.csv")
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                for sp in re.split(r"[・／/,、 ]", row["元表記など"] or ""):
+                    if sp:
+                        out.setdefault(sp, set()).add(C.hira(row["単語"]))
+    return out
+
+
+def merged_reading(surface, joined, sudachi=None):
+    """The merged word's reading. The pieces' readings joined, unless the dictionary lists the
+    whole word and not that reading: 一昨|年 いっさく+とし → おととし, 一昨|日 → おととい."""
+    listed = RD.compound_readings(surface)
+    if not listed or C.norm(joined) in listed or joined in kinki_readings().get(surface, ()):
+        return joined   # Kinki-listed casual/Kansai readings stay: 何も なんも
+    lex = {C.hira(m.reading_form()) for m in sudachi.lookup(surface)
+           if m.dictionary_form() == surface} if sudachi is not None else set()
+    pick = {r for r in lex if C.norm(r) in listed} or lex or set(listed)
+    if len(pick) > 1:  # 一昨日 おととい / いっさくじつ: take the common (priority-tagged) one
+        pri = [r for rs, _, _ in C.entries(surface) for r in rs if r in pick]
+        pick = {pri[0]} if pri else pick
+    return pick.pop() if len(pick) == 1 else joined
+
+
+def merge_words(toks, sudachi=None):
+    """Join Sudachi pieces that make one learner word (なん|か → なんか, お|願い → お願い), per word_merge.
+    The whole word is its own base form; its reading is the pieces' in-context readings joined.
+    Pieces that aren't counted as words (names, numerals, symbols) or have no reading stay apart."""
+    out = []
+    for i, n in WM.spans([(t["surface"], t["pos"]) for t in toks]):
+        ps = toks[i:i + n]
+        # in-context reading of each piece: the model's when it changed one, else the analyzer's
+        reads = [C.hira((surface_reading(p) if p.get("changed") else p.get("kana")) or "")
+                 or (p["surface"] if WM.KANA.match(p["surface"]) else "") for p in ps]
+        if n == 1 or not all(p.get("keep", 1) for p in ps) or not all(reads) or any(
+                a["offset"] + len(a["surface"]) != b["offset"] for a, b in zip(ps, ps[1:])):
+            out.extend(ps)
+            continue
+        surface = "".join(p["surface"] for p in ps)
+        reading = merged_reading(surface, C.hira("".join(reads)), sudachi)
+        pos = next((p["pos"] for p in ps if p["pos"] != "助詞"), ps[0]["pos"])
+        out.append(dict(surface=surface, offset=ps[0]["offset"], end=ps[-1]["offset"] + len(ps[-1]["surface"]),
+                        base=surface, reading=reading, kana=reading, changed=False, confidence=None, pos=pos,
+                        p2="", p3="", keep=1, lemma=surface, merged=[p["surface"] for p in ps]))
+    return out
+
+
 class Worker(RD.Disambiguator):
     """Same as Disambiguator, but also records POS + keep flag per token."""
 
     def _tokens(self, text, prev, next, todo):
+        if self.backend == 'unidic':
+            tokens = self._legacy_tokens(text, prev, next, todo)
+            for t in tokens:
+                t.update(analyzer='unidic', analyzer_reading=t['unidic_reading'],
+                         reading_source='rule' if t.get('rule') else 'analyzer',
+                         end=t['offset'] + len(t['surface']))
+            return tokens
+        tokens = super()._tokens(text, prev, next, todo)
+        for t in tokens:
+            p = t['pos_detail']
+            t.update(p2=p[1], p3=p[2], lemma=t['normalized'], kana=t['surface_reading'] or '')
+            t['keep'] = int(t['pos'] not in SKIP_POS1 and p[1] not in {'数詞', '固有名詞'}
+                            and not t['is_oov'] and not _NUM.search(t['surface']))
+        # Keep the existing word filters for top-level model requests. Components
+        # of a retained lexical unit remain available for its contextual reading.
+        kept = {id(t) for t in tokens if t['keep']}
+        primary = {id(t) for t in tokens}
+        todo[:] = [x for x in todo if id(x[0]) not in primary or id(x[0]) in kept]
+        return tokens
+
+    def _legacy_tokens(self, text, prev, next, todo):
         toks, pos = [], 0
         ws = list(C.tagger()(text))
         before, before_pos = "", ""  # previous token (surface, pos1), for the rules that look back
@@ -131,9 +240,15 @@ class Worker(RD.Disambiguator):
 
 
 def main():
-    w = Worker(MODEL_DIR)
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument('--backend', choices=['sudachi', 'unidic'], default=os.environ.get('MDB_PARSER_BACKEND', 'sudachi'))
+    ap.add_argument('--legacy-gate', action='store_true', help='disable the expanded reading gate')
+    ap.add_argument('--device', choices=['cpu', 'cuda'])
+    args = ap.parse_args()
+    w = Worker(MODEL_DIR, backend=args.backend, device=args.device,
+               expanded_gate=False if args.legacy_gate else None)
     out = sys.stdout
-    out.write(json.dumps({"ready": True, "model": MODEL_DIR, "device": str(w.device)}) + "\n")
+    out.write(json.dumps({"ready": True, "model": MODEL_DIR, "device": str(w.device), "analyzer": w.analyzer.provenance()}) + "\n")
     out.flush()
     for raw in sys.stdin:
         raw = raw.strip()
@@ -142,16 +257,24 @@ def main():
         req = json.loads(raw)
         if "live" in req:
             text = req["live"] or ""
-            toks = w.annotate(text) if text else []
+            plain, idx, gone = unstretch(text)
+            toks = w.annotate(plain) if plain else []
+            if w.backend != 'unidic':
+                toks = merge_words(toks, w.analyzer.dictionary)
+            toks = restretch(toks, text, idx, gone)
             out.write(json.dumps({"toks": [
-                [t["surface"], t["offset"], t["base"], C.hira(t["reading"]) if t["reading"] != "?" else "",
+                [t["surface"], t["offset"], t["base"], C.hira(t["reading"]) if t["reading"] and t["reading"] != "?" else "",
                  surface_reading(t), bool(t["changed"])] for t in toks]}, ensure_ascii=False) + "\n")
             out.flush()
             continue
         items = req.get("lines") or []
         texts = [clean(x.get("text", "")) for x in items]
+        plain = [unstretch(t) for t in texts]
         res = []
-        for x, toks in zip(items, w.annotate_lines(texts)):
+        for x, text, (_, idx, gone), toks in zip(items, texts, plain, w.annotate_lines([p[0] for p in plain])):
+            if w.backend != 'unidic':  # the UniDic fallback keeps its own merge table (candgen.merge_span)
+                toks = merge_words(toks, w.analyzer.dictionary)
+            toks = restretch(toks, text, idx, gone)
             res.append({"id": x["id"], "toks": [
                 [t["surface"], t["base"], C.hira(t["reading"]) if t["reading"] else "", t["pos"] or "",
                  t["p2"], t["p3"], t["keep"], t["lemma"]] for t in toks]})
