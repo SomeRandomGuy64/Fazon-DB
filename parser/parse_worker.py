@@ -40,6 +40,10 @@ SKIP_POS1 = {"補助記号", "記号", "空白"}
 _TAG = re.compile(r"<[^>]+>")
 _BRACKETS = [re.compile(r"\[[^\]]*\]"), re.compile(r"（[^）]*）"), re.compile(r"\([^)]*\)")]
 _NUM = re.compile(r"[0-9０-９]")
+# Stretch marks after hiragana/kanji are elongation, not spelling: Sudachi turns 来たー into 来|たー
+# (a bogus word たー), でかーい into で|かー|い, 強ーい into 強(きょう)|ー|い. They're dropped before
+# analysis and the tokens mapped back, so each surface still shows its ー. Katakana keeps ー (ゲーム).
+_STRETCH = re.compile(r"(?<=[ぁ-ゖ一-龯々〆])[ー〜～]+")
 
 
 def clean(text):
@@ -48,6 +52,33 @@ def clean(text):
     for rx in _BRACKETS:
         t = rx.sub("", t)
     return re.sub(r"[\r\n  ]+", " ", t).strip()
+
+
+def unstretch(text):
+    """text → (text without stretch marks, original index of each kept char + end, removed indices)."""
+    gone = {i for m in _STRETCH.finditer(text) for i in range(m.start(), m.end())}
+    if not gone:
+        return text, None, gone
+    idx = [i for i in range(len(text)) if i not in gone]
+    return "".join(text[i] for i in idx), idx + [len(text)], gone
+
+
+def restretch(toks, text, idx, gone):
+    """Map tokens of the unstretched text back onto `text`: offsets move, and each surface takes the
+    stretch marks that directly follow it (来た + ー → surface たー, base/reading stay た)."""
+    if idx is None:
+        return toks
+    for t in toks:
+        a = t["offset"]
+        b = a + len(t["surface"])
+        start = idx[a] if a < len(idx) - 1 else len(text)
+        end = idx[b - 1] + 1 if b > a else start
+        while end < len(text) and end in gone:
+            end += 1
+        t["offset"], t["surface"] = start, text[start:end]
+        if "end" in t:
+            t["end"] = end
+    return toks
 
 
 def keep(w, tok):
@@ -226,9 +257,11 @@ def main():
         req = json.loads(raw)
         if "live" in req:
             text = req["live"] or ""
-            toks = w.annotate(text) if text else []
+            plain, idx, gone = unstretch(text)
+            toks = w.annotate(plain) if plain else []
             if w.backend != 'unidic':
                 toks = merge_words(toks, w.analyzer.dictionary)
+            toks = restretch(toks, text, idx, gone)
             out.write(json.dumps({"toks": [
                 [t["surface"], t["offset"], t["base"], C.hira(t["reading"]) if t["reading"] and t["reading"] != "?" else "",
                  surface_reading(t), bool(t["changed"])] for t in toks]}, ensure_ascii=False) + "\n")
@@ -236,10 +269,12 @@ def main():
             continue
         items = req.get("lines") or []
         texts = [clean(x.get("text", "")) for x in items]
+        plain = [unstretch(t) for t in texts]
         res = []
-        for x, toks in zip(items, w.annotate_lines(texts)):
+        for x, text, (_, idx, gone), toks in zip(items, texts, plain, w.annotate_lines([p[0] for p in plain])):
             if w.backend != 'unidic':  # the UniDic fallback keeps its own merge table (candgen.merge_span)
                 toks = merge_words(toks, w.analyzer.dictionary)
+            toks = restretch(toks, text, idx, gone)
             res.append({"id": x["id"], "toks": [
                 [t["surface"], t["base"], C.hira(t["reading"]) if t["reading"] else "", t["pos"] or "",
                  t["p2"], t["p3"], t["keep"], t["lemma"]] for t in toks]})
