@@ -77,6 +77,9 @@ func buildWhere(db *sql.DB, q string) (string, []any, error) {
 				c = "n.deck_id IN (" + joinIDs(ids) + ")"
 			}
 		case "tag":
+			if !strings.HasPrefix(val, "_card-status::") {
+				ensureTagsetsForTag(db, val)
+			}
 			c, args = tagCond(val, args)
 		case "i":
 			switch {

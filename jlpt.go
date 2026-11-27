@@ -13,10 +13,12 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"log"
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 )
 
@@ -116,6 +118,7 @@ func jlptParts(db *sql.DB) (map[string]jlptSplit, error) {
 	if len(todo) == 0 {
 		return parts, nil
 	}
+	log.Printf("jlpt: parsing %d list entries with parser %s (%d cached)", len(todo), fp, len(parts))
 	wk, err := sharedWorker()
 	if err != nil {
 		return nil, err
@@ -196,10 +199,17 @@ type jlptWord struct {
 
 // jlptMatch resolves every list entry against the current morphs.
 func jlptMatch(db *sql.DB) ([]jlptWord, error) {
+	t0 := time.Now()
 	parts, err := jlptParts(db)
 	if err != nil {
 		return nil, err
 	}
+	tParts := time.Since(t0)
+	defer func() {
+		if d := time.Since(t0); d > 3*time.Second { // leave evidence when the tab is slow
+			log.Printf("jlpt: slow match %s (parse cache %s)", d.Round(time.Millisecond), tParts.Round(time.Millisecond))
+		}
+	}()
 	byReading := map[string][]*jlptMorph{}
 	byKey := map[[2]string]*jlptMorph{}
 	byBase := map[string][]*jlptMorph{}

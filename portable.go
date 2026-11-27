@@ -145,10 +145,8 @@ func cmdImportKnown(db *sql.DB, path string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := refreshNotes(db, flipped); err != nil {
-		return err
-	}
-	return computeTagsets(db)
+	_, err = refreshNotes(db, flipped)
+	return err
 }
 
 // cmdAnkiPrune deletes subs2srs pool notes from Anki once the database fully

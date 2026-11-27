@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	_ "github.com/mattn/go-sqlite3"
+	"github.com/mattn/go-sqlite3"
 )
 
 // Paths. Everything lives next to the binary's project folder unless overridden.
@@ -158,16 +158,33 @@ CREATE TABLE IF NOT EXISTS mined(note_id INTEGER NOT NULL, tag TEXT, word TEXT, 
 CREATE TABLE IF NOT EXISTS study_links(study_id INTEGER PRIMARY KEY, source_id INTEGER NOT NULL, at INTEGER NOT NULL);
 `
 
+func init() {
+	sql.Register("sqlite3_fazon", &sqlite3.SQLiteDriver{
+		ConnectHook: func(c *sqlite3.SQLiteConn) error {
+			_, err := c.Exec("PRAGMA mmap_size=8589934592", nil) // 8 GB: covers the whole file
+			return err
+		},
+	})
+}
+
 func openDB() (*sql.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite3", "file:"+dbPath+"?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=30000&_foreign_keys=off&_cache_size=-200000")
+	// Reads go through mmap: those pages are the OS's file cache, which it can
+	// drop and re-read from disk in milliseconds. A large private page cache per
+	// connection (was 200 MB each) is anonymous memory instead: when the machine
+	// is short on RAM it goes to swap, and the first request after an idle spell
+	// (the JLPT tab especially) spent minutes paging it back in.
+	db, err := sql.Open("sqlite3_fazon", "file:"+dbPath+"?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=30000&_foreign_keys=off&_cache_size=-32000")
 	if err != nil {
 		return nil, err
 	}
 	if _, err := db.Exec(schema); err != nil {
 		return nil, fmt.Errorf("schema: %w", err)
+	}
+	if err := migrateLazyTagsets(db); err != nil {
+		return nil, fmt.Errorf("lazy tag sets: %w", err)
 	}
 	// migrations for databases created by earlier versions
 	var hasLemma int

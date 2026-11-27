@@ -201,9 +201,21 @@ func refreshSuspended(db *sql.DB) ([]int64, error) {
 	if err != nil {
 		return nil, err
 	}
-	tx.Exec(`DELETE FROM suspended_words`)
+	// write only the difference: a wholesale rewrite fires the tag-set
+	// staleness triggers on every sync (lazytagsets.go)
+	var gone []int64
+	for id := range old {
+		if _, ok := cur[id]; !ok {
+			gone = append(gone, id)
+		}
+	}
+	if len(gone) > 0 {
+		tx.Exec(`DELETE FROM suspended_words WHERE morph_id IN (` + joinIDs(gone) + `)`)
+	}
 	for id, n := range cur {
-		tx.Exec(`INSERT INTO suspended_words(morph_id, note_id, word) VALUES(?,?,?)`, id, n.id, n.word)
+		tx.Exec(`INSERT INTO suspended_words(morph_id, note_id, word) VALUES(?,?,?)
+		   ON CONFLICT(morph_id) DO UPDATE SET note_id=excluded.note_id, word=excluded.word
+		   WHERE suspended_words.note_id IS NOT excluded.note_id OR suspended_words.word IS NOT excluded.word`, id, n.id, n.word)
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
@@ -239,7 +251,7 @@ func syncSuspended(db *sql.DB) error {
 		return err
 	}
 	log.Printf("suspended words: %d changed, %d flipped known/unknown", len(changed), len(flipped))
-	return computeTagsets(db)
+	return nil
 }
 
 // excludedMorphs = the suspended words that are not learning targets.
@@ -291,7 +303,7 @@ func allowWord(db *sql.DB, base, reading string, allow bool) (int, error) {
 			db.Exec(`DELETE FROM suspend_marks WHERE base=? AND reading=?`, k[0], k[1])
 		}
 	}
-	return len(keys), computeTagsets(db)
+	return len(keys), nil
 }
 
 type suspendedRow struct {

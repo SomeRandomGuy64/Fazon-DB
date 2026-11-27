@@ -355,6 +355,9 @@ type tagsetRank struct {
 }
 
 func tagsetView(db *sql.DB, prefix string, limit, offset int) ([]tagsetRank, error) {
+	if err := ensureTagsets(db, func(p string) bool { return p == prefix }); err != nil {
+		return nil, err
+	}
 	var tsid int64
 	if err := db.QueryRow(`SELECT id FROM tagsets WHERE prefix=?`, prefix).Scan(&tsid); err != nil {
 		return []tagsetRank{}, nil

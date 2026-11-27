@@ -93,6 +93,8 @@ func unknownWords(db *sql.DB, nid int64) []string {
 
 // noteTags = imported tags + tag-set tags + derived status tag.
 func noteTags(db *sql.DB, nid int64) []string {
+	// tag-set tags here are display only, as of each set's last build: a note
+	// lookup never triggers a rebuild (the Tag sets tab, tag: search and mining do)
 	out := []string{}
 	rows, err := db.Query(`SELECT tag FROM tagset_assign WHERE note_id=? UNION ALL SELECT tag FROM note_tags WHERE note_id=?`, nid, nid)
 	if err == nil {
@@ -142,6 +144,7 @@ type tagsetInfo struct {
 	Targets int    `json:"targets"`
 	Placed  int    `json:"placed"`
 	Tags    int    `json:"tags"`
+	Stale   bool   `json:"stale"` // inputs changed since the last build; rebuilt when the set is next read
 }
 
 func getStatus(db *sql.DB) statusInfo {
@@ -178,12 +181,15 @@ func getStatus(db *sql.DB) statusInfo {
 	if tot.Float64 > 0 {
 		s.Coverage = 100 * kn.Float64 / tot.Float64
 	}
-	rows, _ = db.Query(`SELECT t.prefix, COALESCE(t.name,''), (SELECT COUNT(*) FROM tagset_targets WHERE tagset_id=t.id),
+	stale, _ := staleTagsets(db) // counts below are as of each set's last build
+	rows, _ = db.Query(`SELECT t.id, t.prefix, COALESCE(t.name,''), (SELECT COUNT(*) FROM tagset_targets WHERE tagset_id=t.id),
 	   (SELECT COUNT(DISTINCT rank) FROM tagset_assign WHERE tagset_id=t.id), (SELECT COUNT(*) FROM tagset_assign WHERE tagset_id=t.id)
 	   FROM tagsets t ORDER BY t.prefix`)
 	for rows != nil && rows.Next() {
 		var t tagsetInfo
-		rows.Scan(&t.Prefix, &t.Name, &t.Targets, &t.Placed, &t.Tags)
+		var id int64
+		rows.Scan(&id, &t.Prefix, &t.Name, &t.Targets, &t.Placed, &t.Tags)
+		t.Stale = stale[id]
 		s.Tagsets = append(s.Tagsets, t)
 	}
 	if rows != nil {

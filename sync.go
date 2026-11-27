@@ -224,10 +224,8 @@ func syncOnce(db *sql.DB, days int, full bool) (syncStats, error) {
 		n += n2
 	}
 	st.notesRecounted = n
+	// tag sets: the triggers mark what changed; they rebuild when next read
 	if st.flipped > 0 || st.reparsed > 0 || st.cards > 0 {
-		if err := computeTagsets(db); err != nil {
-			return st, err
-		}
 		st.tagsets = true
 	}
 	return st, nil

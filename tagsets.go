@@ -21,7 +21,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
+	"sync"
 	"strconv"
 	"strings"
 	"time"
@@ -36,6 +38,8 @@ type tagset struct {
 	cap, ideal, minLen, maxLen  int
 	enabled                     bool
 	targets                     []target
+	creatorOf                   map[string]string // deck name -> creator key, memoised by orderCands
+	dirtyGen                    int64             // lazytagsets.go: fresh when built at this generation
 }
 
 type target struct {
@@ -46,19 +50,27 @@ type target struct {
 // ---------------------------------------------------------------------------
 // deck globs (Anki "deck:" semantics: * wildcard, matches subdecks too)
 
-var globCache = map[string]*regexp.Regexp{}
+var (
+	globMu    sync.Mutex
+	globCache = map[string]*regexp.Regexp{}
+)
 
-func deckGlob(g string) *regexp.Regexp {
-	if re, ok := globCache[g]; ok {
+// deckGlob compiles an Anki deck glob once. The cache is keyed on the glob as
+// written ("deck:Database::higuchi_*"); keying it on the trimmed form meant
+// every lookup missed and recompiled.
+func deckGlob(orig string) *regexp.Regexp {
+	globMu.Lock()
+	defer globMu.Unlock()
+	if re, ok := globCache[orig]; ok {
 		return re
 	}
-	g = strings.Trim(strings.TrimPrefix(strings.Trim(g, `"`), "deck:"), `"`)
+	g := strings.Trim(strings.TrimPrefix(strings.Trim(orig, `"`), "deck:"), `"`)
 	parts := strings.Split(g, "*")
 	for i, p := range parts {
 		parts[i] = regexp.QuoteMeta(p)
 	}
 	re := regexp.MustCompile(`(?i)^` + strings.Join(parts, `.*`) + `(::.*)?$`)
-	globCache[g] = re
+	globCache[orig] = re
 	return re
 }
 
@@ -278,7 +290,7 @@ func tagsetPrefixes(db *sql.DB) []string {
 }
 
 func loadTagsets(db *sql.DB) ([]*tagset, error) {
-	rows, err := db.Query(`SELECT id, prefix, COALESCE(name,''), pool, creators, zatsudan, cap, ideal_len, min_len, max_len, enabled FROM tagsets ORDER BY id`)
+	rows, err := db.Query(`SELECT id, prefix, COALESCE(name,''), pool, creators, zatsudan, cap, ideal_len, min_len, max_len, enabled, dirty_gen FROM tagsets ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -286,8 +298,8 @@ func loadTagsets(db *sql.DB) ([]*tagset, error) {
 	for rows.Next() {
 		t := &tagset{}
 		var pool, creators string
-		rows.Scan(&t.id, &t.prefix, &t.name, &pool, &creators, &t.zatsudan, &t.cap, &t.ideal, &t.minLen, &t.maxLen, &t.enabled)
-		json.Unmarshal([]byte(pool), &t.pool)
+		rows.Scan(&t.id, &t.prefix, &t.name, &pool, &creators, &t.zatsudan, &t.cap, &t.ideal, &t.minLen, &t.maxLen, &t.enabled, &t.dirtyGen)
+		t.pool = parsePool(pool)
 		json.Unmarshal([]byte(creators), &t.creators)
 		out = append(out, t)
 	}
@@ -354,12 +366,19 @@ func minedWords(db *sql.DB) map[string]bool {
 	return out
 }
 
-func computeTagsets(db *sql.DB) error {
+func parsePool(js string) []string {
+	var p []string
+	json.Unmarshal([]byte(js), &p)
+	return p
+}
+
+// computeTagsets rebuilds every set now. Change paths no longer call it: the
+// staleness triggers mark sets and readers rebuild on demand (lazytagsets.go).
+func computeTagsets(db *sql.DB) error { return forceTagsets(db) }
+
+// buildTagsets recomputes the given sets from the i+1 index and marks them fresh.
+func buildTagsets(db *sql.DB, sets []*tagset) error {
 	t0 := time.Now()
-	sets, err := loadTagsets(db)
-	if err != nil {
-		return err
-	}
 	decks := map[int64]string{}
 	rows, err := db.Query(`SELECT id, name FROM decks`)
 	if err != nil {
@@ -404,13 +423,24 @@ func computeTagsets(db *sql.DB) error {
 	}
 	defer tx.Rollback()
 	ins, _ := tx.Prepare(`INSERT INTO tagset_assign(tagset_id, rank, pos, note_id, word, tag) VALUES(?,?,?,?,?,?)`)
+	ids := make([]int64, len(sets))
+	for i, ts := range sets {
+		ids[i] = ts.id
+	}
+	old := loadAssignments(tx, ids)
 	var summary []string
+	rewritten := 0
 	for _, ts := range sets {
-		tx.Exec(`DELETE FROM tagset_assign WHERE tagset_id=?`, ts.id)
+		var rows []assignRow
 		if !ts.enabled {
+			if len(old[ts.id]) > 0 {
+				tx.Exec(`DELETE FROM tagset_assign WHERE tagset_id=?`, ts.id)
+			}
+			tx.Exec(`UPDATE tagsets SET built_gen=? WHERE id=?`, ts.dirtyGen, ts.id)
 			continue
 		}
 		placed, tags := 0, 0
+		inPool := map[string]bool{} // deck name -> in this set's pool (globs are slow to match per note)
 		for _, tg := range ts.targets {
 			tg.word, _, _ = strings.Cut(tg.word, "-") // チャンネル-channel -> チャンネル
 			if mined[tg.word] {
@@ -419,7 +449,12 @@ func computeTagsets(db *sql.DB) error {
 			wl := runeLen(tg.word)
 			var cs []cand
 			for _, c := range byBase[tg.word] {
-				if !matchAny(ts.pool, c.deck) {
+				in, ok := inPool[c.deck]
+				if !ok {
+					in = matchAny(ts.pool, c.deck)
+					inPool[c.deck] = in
+				}
+				if !in {
 					continue
 				}
 				if labelArtifact(c.sent, c.base) {
@@ -441,11 +476,26 @@ func computeTagsets(db *sql.DB) error {
 			placed++
 			for i, c := range ordered {
 				tag := fmt.Sprintf("%s::%04d::%02d", ts.prefix, tg.rank, i+1)
-				if _, err := ins.Exec(ts.id, tg.rank, i+1, c.id, tg.word, tag); err != nil {
-					return err
-				}
+				rows = append(rows, assignRow{tg.rank, i + 1, c.id, tg.word, tag})
 				tags++
 			}
+		}
+		// Rewriting ~400k rows (three indexes) on every recompute was most of
+		// the write cost; most recomputes change only a few sets, or none.
+		if !slices.Equal(rows, old[ts.id]) {
+			rewritten++
+			if _, err := tx.Exec(`DELETE FROM tagset_assign WHERE tagset_id=?`, ts.id); err != nil {
+				return err
+			}
+			for _, r := range rows {
+				if _, err := ins.Exec(ts.id, r.rank, r.pos, r.note, r.word, r.tag); err != nil {
+					return err
+				}
+			}
+		}
+		// a trigger bump during the build leaves dirty_gen ahead: still stale, rebuilt next read
+		if _, err := tx.Exec(`UPDATE tagsets SET built_gen=? WHERE id=?`, ts.dirtyGen, ts.id); err != nil {
+			return err
 		}
 		summary = append(summary, fmt.Sprintf("%s %d/%d words %d tags", ts.prefix, placed, len(ts.targets), tags))
 	}
@@ -453,8 +503,31 @@ func computeTagsets(db *sql.DB) error {
 		return err
 	}
 	setMeta(db, "tagsets_built", time.Now().Format(time.RFC3339))
-	log.Printf("tag sets recomputed in %s: %s", time.Since(t0).Round(time.Millisecond), strings.Join(summary, "; "))
+	log.Printf("tag sets rebuilt in %s (%d built, %d changed): %s", time.Since(t0).Round(time.Millisecond), len(sets), rewritten, strings.Join(summary, "; "))
 	return nil
+}
+
+type assignRow struct {
+	rank, pos int
+	note      int64
+	word, tag string
+}
+
+// loadAssignments = the current tagset_assign rows per set, in (rank, pos) order.
+func loadAssignments(tx *sql.Tx, ids []int64) map[int64][]assignRow {
+	out := map[int64][]assignRow{}
+	rows, err := tx.Query(`SELECT tagset_id, rank, pos, note_id, word, tag FROM tagset_assign WHERE tagset_id IN (` + joinIDs(ids) + `) ORDER BY tagset_id, rank, pos`)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var r assignRow
+		rows.Scan(&id, &r.rank, &r.pos, &r.note, &r.word, &r.tag)
+		out[id] = append(out[id], r)
+	}
+	return out
 }
 
 func orderCands(ts *tagset, cs []cand) []cand {
@@ -462,12 +535,21 @@ func orderCands(ts *tagset, cs []cand) []cand {
 		return nil
 	}
 	creatorOf := func(deck string) string {
+		if ts.creatorOf == nil {
+			ts.creatorOf = map[string]string{}
+		}
+		if k, ok := ts.creatorOf[deck]; ok {
+			return k
+		}
+		k := "?"
 		for _, cr := range ts.creators {
 			if deckGlob(cr[1]).MatchString(deck) {
-				return cr[0]
+				k = cr[0]
+				break
 			}
 		}
-		return "?"
+		ts.creatorOf[deck] = k
+		return k
 	}
 	by := map[string][]cand{}
 	for _, c := range cs {
