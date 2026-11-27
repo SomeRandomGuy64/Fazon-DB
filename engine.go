@@ -253,10 +253,7 @@ func recalcAll(db *sql.DB) error {
 		return err
 	}
 	log.Printf("i+N: %d notes updated in %s", n, time.Since(t1).Round(time.Millisecond))
-	if err := computeTagsets(db); err != nil {
-		return err
-	}
-	return nil
+	return nil // tag sets rebuild lazily when read (lazytagsets.go)
 }
 
 // morphsOfNotes returns the distinct morph ids on the given notes.

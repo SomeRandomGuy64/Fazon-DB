@@ -75,6 +75,9 @@ func cmdAlternates(db *sql.DB, tag string) ([]noteOut, error) {
 		return nil, fmt.Errorf("not a positional mining tag (…::NNNN::PP): %s", tag)
 	}
 	prefix := m[1]
+	if err := ensureTagsetsForTag(db, prefix); err != nil {
+		return nil, err
+	}
 	start, _ := strconv.Atoi(m[2]) // not Sscan: it reads "08" as (invalid) octal
 	rows, err := db.Query(`SELECT tag, pos, note_id, word FROM tagset_assign WHERE tag LIKE ? ESCAPE '\' AND pos >= ? ORDER BY pos`,
 		likeGlob(prefix)+"::%", start)
@@ -213,6 +216,7 @@ func printJSON(v any) {
 }
 
 func wordOfTag(db *sql.DB, tag string) string {
+	ensureTagsetsForTag(db, tag)
 	var w string
 	db.QueryRow(`SELECT word FROM tagset_assign WHERE tag=?`, strings.TrimSpace(tag)).Scan(&w)
 	return w

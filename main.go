@@ -36,6 +36,8 @@ Day to day
   mdb allow BASE [READING]   let a suspended word be a learning target (disallow = undo)
   mdb search QUERY [-n 20]   search notes (see query.go for syntax)
   mdb known BASE [READING]   mark a word known       (unknown / forget likewise)
+  mdb mark-file FILE         bulk marks, one per line: ACTION<TAB>BASE<TAB>READING
+                             (ACTION = known|unknown|forget|ignore|unignore|auto); one recount
   mdb ignore BASE [READING]  ignore a word: neither known nor unknown (unignore = never
                              ignore; auto = back to the default: single-kana fragments ignored)
   mdb backup                 snapshot + upload to Hetzner
@@ -151,6 +153,11 @@ func run(db *sql.DB, cmd string, args []string) error {
 		}
 		printJSON(rs)
 		return nil
+	case "mark-file":
+		if len(rest) != 1 {
+			return fmt.Errorf("usage: mdb mark-file FILE")
+		}
+		return cmdMarkFile(db, rest[0])
 	case "known", "unknown", "forget", "ignore", "unignore", "auto":
 		if len(rest) < 1 {
 			return fmt.Errorf("usage: mdb %s BASE [READING]", cmd)
@@ -306,9 +313,6 @@ func markWord(db *sql.DB, base, reading, how string) (int, error) {
 	}
 	if len(flipped) > 0 {
 		if _, err := refreshNotes(db, flipped); err != nil {
-			return 0, err
-		}
-		if err := computeTagsets(db); err != nil {
 			return 0, err
 		}
 	}

@@ -121,7 +121,20 @@ a { color: var(--accent); }
 <script>
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const api = (p, opt) => fetch(p, opt).then(r => r.ok ? r.json() : r.text().then(t => { throw new Error(t) }));
+const apiAny = (p, opt) => fetch(p, opt).then(r => r.ok ? r.json() : r.text().then(t => { throw new Error(t) }));
+// Views render after an await; if the user moved on meanwhile (other tab, next
+// page, another tag set) the old response must not land: its elements are gone
+// ("$(...) is null") or, worse, it would overwrite the new view. Every view
+// change bumps `view`; a GET answered for an older view is dropped as STALE.
+let view = 0;
+const STALE = new Error('stale view');
+const api = async (p, opt) => {
+  const v = view, get = !opt || !opt.method || opt.method === 'GET';
+  const r = await apiAny(p, opt);
+  if (get && v !== view) throw STALE;
+  return r;
+};
+window.addEventListener('unhandledrejection', e => { if (e.reason === STALE) e.preventDefault(); });
 const fmt = n => (n ?? 0).toLocaleString();
 const ago = iso => { if (!iso) return 'never'; const s = (Date.now() - new Date(iso)) / 1000;
   return s < 90 ? 'just now' : s < 5400 ? Math.round(s/60) + ' min ago' : s < 129600 ? Math.round(s/3600) + ' h ago' : Math.round(s/86400) + ' d ago'; };
@@ -224,6 +237,7 @@ const tabs = {
         <button class="btn primary" id="go">Search</button></div>
       <div class="cards" id="res"></div><div class="pager" id="pg"></div>`;
     const run = async () => {
+      view++;
       state.q = $('#q').value;
       $('#res').innerHTML = '<div class="empty">Searching…</div>';
       try {
@@ -233,7 +247,7 @@ const tabs = {
         $('#pg').innerHTML = (state.off ? '<button class="btn" id="prev">← Prev</button>' : '') + (rs.length === 50 ? '<button class="btn" id="nxt">Next →</button>' : '');
         if ($('#prev')) $('#prev').onclick = () => { state.off = Math.max(0, state.off - 50); run(); };
         if ($('#nxt')) $('#nxt').onclick = () => { state.off += 50; run(); };
-      } catch (e) { $('#res').innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+      } catch (e) { if (e !== STALE) $('#res').innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
     };
     $('#go').onclick = () => { state.off = 0; run(); };
     $('#q').onkeydown = e => { if (e.key === 'Enter') { state.off = 0; run(); } };
@@ -246,6 +260,7 @@ const tabs = {
       <div class="row"><input type="search" id="dq" placeholder="Filter decks by name, e.g.  oriki   ·   trial   ·   tcg" value="${esc(state.dq)}"></div>
       <div class="tscroll"><table id="dt"></table></div>`;
     const run = async () => {
+      view++;
       state.dq = $('#dq').value;
       const ds = await api('/api/decks?q=' + encodeURIComponent(state.dq));
       $('#dt').innerHTML = `<tr><th>Deck</th><th class="num">Cards</th><th class="num">i+0</th><th class="num">i+1</th><th class="num">i+≥2</th><th class="num">In Anki</th></tr>` +
@@ -268,6 +283,7 @@ const tabs = {
       <div class="tscroll"><table id="wt"></table></div><div class="pager" id="wpg"></div>`;
     $('#wk').value = state.wk;
     const run = async () => {
+      view++;
       state.wq = $('#wq').value; state.wk = $('#wk').value;
       const ws = await api(`/api/words?limit=100&offset=${state.woff}&known=${state.wk}&q=` + encodeURIComponent(state.wq));
       $('#wt').innerHTML = `<tr><th class="num">Rank</th><th>Word</th><th>POS</th><th class="num">Freq</th><th class="num">i+1 cards</th><th>Status</th><th></th></tr>` +
@@ -294,8 +310,9 @@ const tabs = {
     const s = await api('/api/status');
     if (!state.tsPrefix && s.tagsets?.length) state.tsPrefix = s.tagsets[0].prefix;
     $('#main').innerHTML = `<div class="row"><select id="ts">${(s.tagsets || []).map(t => `<option ${t.prefix === state.tsPrefix ? 'selected' : ''}>${esc(t.prefix)}</option>`).join('')}</select>
-      <span class="romaji">Recomputed on every sync — learn a word and its tags disappear.</span></div><div id="tsl"></div><div class="pager" id="tpg"></div>`;
+      <span class="romaji">Rebuilt when you open it if anything changed — learn a word and its tags disappear.</span></div><div id="tsl"></div><div class="pager" id="tpg"></div>`;
     const run = async () => {
+      view++;
       state.tsPrefix = $('#ts').value;
       const rs = await api(`/api/tagset?limit=25&offset=${state.toff}&prefix=` + encodeURIComponent(state.tsPrefix));
       $('#tsl').innerHTML = rs.map(w => `<div class="tsword"><h3><span class="r">#${w.rank}</span>${wordLabel(w.word, w.reading)}</h3>
@@ -377,6 +394,7 @@ const tabs = {
       return `<span class="jp">${esc(w.expr)}</span>` + (w.reading !== w.expr ? ` <span class="jp">【${esc(w.reading)}】</span>` : '') +
         (rd.every(x => /^[ぁ-ゖァ-ヺー]+$/.test(x)) ? ` <span class="romaji">${esc(rd.map(romaji).join(' / '))}</span>` : ''); };
     const run = async () => {
+      view++;
       state.jlq = $('#jq').value; state.jls = $('#js').value; save();
       $('#jlh').textContent = `N${state.jl} words` + (state.jls === 'minable' || state.jls === 'unknown' ? ' — most frequent in your cards first' : '');
       const ws = await api(`/api/jlpt/words?limit=100&offset=${state.jloff}&level=${state.jl}&status=${state.jls}&q=` + encodeURIComponent(state.jlq));
@@ -402,12 +420,14 @@ const tabs = {
 
 // one deck's cards in video order (Decks tab → click a deck)
 async function deckView() {
+  view++;
   $('#main').innerHTML = `
     <div class="row"><button class="btn" id="dback">← All decks</button><h2 style="margin:0"><code>${esc(state.deck.replace(/^Database::/, ''))}</code></h2>
       <select id="di"><option value="">All cards</option><option value="i:0">i+0</option><option value="i:1">i+1</option><option value="i:2+">i+≥2</option></select></div>
     <div class="cards" id="dres"></div><div class="pager" id="dpg"></div>`;
   $('#di').value = state.di;
   const run = async () => {
+    view++;
     state.di = $('#di').value;
     $('#dres').innerHTML = '<div class="empty">Loading…</div>';
     const rs = await api(`/api/deck?limit=50&offset=${state.doff}&q=${encodeURIComponent(state.di)}&name=` + encodeURIComponent(state.deck));
@@ -424,7 +444,7 @@ async function deckView() {
 }
 
 async function openNote(nid) {
-  const n = await api('/api/note/' + nid);
+  const n = await apiAny('/api/note/' + nid); // the drawer is independent of the view
   const f = n.fields, audio = (f['Sentence Audio'].match(/\[(?:audio|sound):([^\]]+)\]/) || [])[1], img = (f.Image.match(/src="([^"]+)"/) || [])[1];
   const toks = (n.tokens || []).map((t, i) => t.id
     ? `<span class="tok ${t.ignored ? 'g' : t.known ? '' : 'u'}" data-i="${i}">${esc(t.s)}<small>${/[一-龯々〆ヶ]/.test(t.s) ? esc(t.reading) : '&nbsp;'}</small></span>`
@@ -470,12 +490,13 @@ function show(tab) {
   state.tab = tab;
   save();
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
-  tabs[tab]().catch(e => $('#main').innerHTML = `<div class="empty">${esc(e.message)}</div>`);
+  view++;
+  tabs[tab]().catch(e => { if (e !== STALE) $('#main').innerHTML = `<div class="empty">${esc(e.message)}</div>`; });
 }
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => show(b.dataset.tab));
 document.addEventListener('keydown', e => { if (e.key === 'Escape') $('#drawer').classList.remove('open'); });
 
-async function refreshSync() { try { const s = await api('/api/status'); $('#synctext').textContent = 'Anki sync ' + ago(s.last_sync); } catch {} }
+async function refreshSync() { try { const s = await apiAny('/api/status'); $('#synctext').textContent = 'Anki sync ' + ago(s.last_sync); } catch {} }
 $('#syncbtn').onclick = async () => { $('#syncbtn').disabled = true; $('#synctext').textContent = 'Syncing…';
   try { const r = await api('/api/sync', {method: 'POST'}); $('#synctext').textContent = r.result; } catch (e) { $('#synctext').textContent = e.message; }
   $('#syncbtn').disabled = false; };

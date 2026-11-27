@@ -22,7 +22,7 @@ tag sets are kept up to date incrementally, so there is never a full recalc.
 | Known words | `engine.go`. A word is known if marked known here, or it's on a studied card or an `i+0-manually` card, or its dictionary form/lemma is AnkiMorphs-known |
 | i+N | `engine.go`. Only notes containing a word whose status flipped are recounted |
 | Priority | Word frequency over the parsed text of all your cards (`morphs.rank`) |
-| Tag sets | `tagsets.go`. Go port of the `*_daily` add-ons' engine, imported from the add-on folders. Recomputed after every change (~9 s), not once a day |
+| Tag sets | `tagsets.go` + `lazytagsets.go`. Go port of the `*_daily` add-ons' engine, imported from the add-on folders. Lazy: SQLite triggers mark a set stale only when its inputs change (i+1 notes in its pool decks, mined/studied words, suspended words, its own targets/config); it is rebuilt (~1–2 s) only when used — Tag sets tab, `tag:` search, mining by tag, `mdb tagsets`. `/api/status` reports `stale` per set |
 | Live sync | `sync.go`. AnkiConnect polling (reviews, edits, new decks), then the incremental recalc |
 | Harness | `server.go` + `web/index.html`. Overview, cards, words (mark known/unknown), tag sets, card detail with per-token readings + romaji, audio/images from collection.media / database.media |
 | Backup | `backup.go`. `VACUUM INTO` snapshot, zstd, scp to `root@89.167.79.200:/var/backups/fazon-db`. Keeps 14 there and 3 locally |
@@ -51,6 +51,7 @@ tag sets are kept up to date incrementally, so there is never a full recalc.
 - **New or changed word list in a `*_daily` add-on folder?** `./mdb import-tagsets`
 - **Retire a tag set:** `./mdb drop-tagset '!prefix'`. Re-imports skip it.
 - **Mark a word:** `./mdb known 分かる`, `./mdb unknown 方 かた`, `./mdb forget …`. Or use the Words tab.
+- **Bulk marks:** `./mdb mark-file FILE` — one `ACTION<TAB>BASE<TAB>READING` per line (known / unknown / forget / ignore / unignore / auto), one recount for the lot.
 - **Restore a backup:** `scp root@89.167.79.200:/var/backups/fazon-db/<file>.db.zst . && zstd -d <file>.db.zst`,
   then put it at `data/fazon.db` with `mdb serve` stopped.
 

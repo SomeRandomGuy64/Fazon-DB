@@ -249,9 +249,6 @@ func cmdImportApkg(db *sql.DB, path, deckOverride string) error {
 	if err := refreshPriority(db); err != nil {
 		return err
 	}
-	if err := computeTagsets(db); err != nil {
-		return err
-	}
 	logDeckSplit(db, deckID, deckName)
 	log.Printf("done in %s", time.Since(t0).Round(time.Second))
 	resetSharedWorker()
